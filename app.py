@@ -1,18 +1,41 @@
-from flask import Flask, render_template, jsonify, request
+import json
+import logging
+import os
+import re
 import time
 import threading
-import json
-import os
 
-# My modular imports
+from flask import Flask, jsonify, render_template, request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+from config import (
+    ALLOWED_EXTENSIONS,
+    MAX_CONTENT_LENGTH_MB,
+    RATE_LIMIT_AUTO_RUN,
+    RATE_LIMIT_DEFAULT,
+    RATE_LIMIT_REVIEW,
+    RUNS_DIR,
+)
 from environment import CodeReviewEnv
 from agent import review, call_llm
 from grader import grade
-import re
+
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1MB max file size
-ALLOWED_EXTENSIONS = {'py', 'js', 'ts', 'java', 'cpp', 'c', 'go', 'rb', 'php', 'txt'}
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH_MB * 1024 * 1024
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[RATE_LIMIT_DEFAULT],
+    headers_enabled=True,   # Adds Retry-After + X-RateLimit-* headers
+)
+
+# Ensure runs directory exists
+os.makedirs(RUNS_DIR, exist_ok=True)
+HISTORY_FILE = os.path.join(RUNS_DIR, "history.json")
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -41,7 +64,7 @@ def save_history_file():
         "overall_stats": stats,
         "history": STATE["history"]
     }
-    with open("history.json", "w") as f:
+    with open(HISTORY_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
 def calculate_accuracy():
@@ -189,6 +212,7 @@ def next_episode():
     })
 
 @app.route("/api/review", methods=["POST"])
+@limiter.limit(RATE_LIMIT_REVIEW)
 def perform_review():
     data = request.json
     code = data.get("code")
@@ -235,15 +259,15 @@ def perform_review():
 @app.route("/api/history", methods=["GET"])
 def get_history():
     # If history is empty in state, try reading from file
-    if not STATE["history"] and os.path.exists("history.json"):
+    if not STATE["history"] and os.path.exists(HISTORY_FILE):
         try:
-            with open("history.json") as f:
+            with open(HISTORY_FILE) as f:
                 data = json.load(f)
                 STATE["history"] = data["history"]
                 STATE["total_reward"] = data["overall_stats"]["total_reward"]
                 STATE["episode_count"] = data["overall_stats"]["episodes_run"]
-        except:
-            pass
+        except Exception as exc:
+            logger.warning("Could not read history file: %s", exc)
             
     return jsonify({
         "history": STATE["history"],
@@ -254,6 +278,7 @@ def get_history():
     })
 
 @app.route("/api/auto-run", methods=["POST"])
+@limiter.limit(RATE_LIMIT_AUTO_RUN)
 def auto_run():
     if STATE["is_running"]:
         return jsonify({"error": "Already running"}), 400
@@ -297,6 +322,7 @@ def auto_run():
     return jsonify({"status": "running", "count": count})
 
 @app.route("/api/upload", methods=["POST"])
+@limiter.limit(RATE_LIMIT_REVIEW)
 def upload_file():
     if 'file' not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -315,6 +341,7 @@ def upload_file():
     return process_raw_code(code, file.filename, note)
 
 @app.route("/api/review-text", methods=["POST"])
+@limiter.limit(RATE_LIMIT_REVIEW)
 def review_text():
     data = request.json
     code = data.get("code", "")
@@ -441,8 +468,8 @@ def reset_state():
     STATE["episode_count"] = 0
     STATE["history"] = []
     STATE["is_running"] = False
-    if os.path.exists("history.json"):
-        os.remove("history.json")
+    if os.path.exists(HISTORY_FILE):
+        os.remove(HISTORY_FILE)
     return jsonify({"status": "reset"})
 
 if __name__ == "__main__":

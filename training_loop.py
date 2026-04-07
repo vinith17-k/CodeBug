@@ -1,101 +1,162 @@
-import json
-import sys
-import os
-from environment import CodeReviewEnv
-from agent import review
+"""
+training_loop.py — CLI training loop with checkpointing.
 
-def run_training(num_episodes=10, verbose=True):
+Key improvements:
+  - Run outputs saved to runs/ (never committed to git)
+  - Checkpoint saved after every episode: resumes across runs
+  - Config-driven paths
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from datetime import datetime
+
+from config import CHECKPOINT_FILE, RUNS_DIR
+from agent import review
+from environment import CodeReviewEnv
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint helpers
+# ---------------------------------------------------------------------------
+
+
+def _load_checkpoint() -> dict:
+    if os.path.exists(CHECKPOINT_FILE):
+        try:
+            with open(CHECKPOINT_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"total_reward": 0, "episodes_run": 0, "history": []}
+
+
+def _save_checkpoint(data: dict) -> None:
+    os.makedirs(RUNS_DIR, exist_ok=True)
+    with open(CHECKPOINT_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+
+
+def run_training(num_episodes: int = 5, verbose: bool = True, resume: bool = True) -> dict:
     """
-    Main training loop. Runs episodes where the AI reviews code and 
-    records its performance to history.json.
+    Run the training loop.
+
+    Args:
+        num_episodes: How many episodes to run this session.
+        verbose:      Print progress to stdout.
+        resume:       If True, load and continue from the last checkpoint.
     """
+    checkpoint = _load_checkpoint() if resume else {"total_reward": 0, "episodes_run": 0, "history": []}
+
+    if resume and checkpoint["episodes_run"] > 0:
+        if verbose:
+            print(f"Resuming from checkpoint: {checkpoint['episodes_run']} episodes already run.")
+
+    env = CodeReviewEnv()
+    history: list[dict] = checkpoint["history"]
+    total_reward: int   = checkpoint["total_reward"]
+
+    start_ep = checkpoint["episodes_run"]
+
     if verbose:
-        print(f"--- Starting Training Loop: {num_episodes} Episodes ---")
-    
-    # Initialize the code review environment
-    env = CodeReviewEnv("episodes.json", "answers.json")
-    history = []
-    
+        print(f"--- Training Loop: {num_episodes} episodes (starting at ep {start_ep + 1}) ---")
+
     for i in range(1, num_episodes + 1):
-        # 1. Reset for new episode
-        obs = env.reset()
-        
-        # 2. Get AI review
+        obs       = env.reset()
         ai_action = review(obs["code"])
-        
-        # 3. Step the environment
         reward, done, info = env.step(ai_action)
-        
-        # Record metadata for this episode
+
+        total_reward += reward
+
         record = {
-            "episode_index": i,
-            "episode_id": obs["episode_id"],
-            "snippet_id": obs["snippet_id"],
-            "reward": reward,
-            "ai_said": info["ai_said"],
-            "truth": info["truth"],
-            "correct": info["correct"],
-            "breakdown": info["breakdown"]
+            "episode_index": start_ep + i,
+            "episode_id":    obs["episode_id"],
+            "snippet_id":    obs["snippet_id"],
+            "reward":        reward,
+            "ai_said":       info["ai_said"],
+            "truth":         info["truth"],
+            "correct":       info["correct"],
+            "breakdown":     info["breakdown"],
+            "timestamp":     datetime.utcnow().isoformat() + "Z",
         }
         history.append(record)
-        
+
+        # Save checkpoint after every episode
+        _save_checkpoint({
+            "total_reward": total_reward,
+            "episodes_run": start_ep + i,
+            "history":      history,
+        })
+
         if verbose:
             status = "✓ CORRECT" if info["correct"] else "✗ WRONG"
-            print(f"Ep {i:02d} | ID: {obs['episode_id']} | {info['ai_said']:20} | {status} | Rewards: {reward:+3d}")
+            print(
+                f"Ep {start_ep + i:03d} | {obs['episode_id']} | "
+                f"{info['ai_said']:22} | {status} | Reward: {reward:+3d} | "
+                f"Cumulative: {total_reward}"
+            )
 
-    # Generate summary statistics
     stats = env.get_stats()
-    
-    output_data = {
-        "overall_stats": stats,
-        "history": history
-    }
-    
-    # Save training history
-    with open("history.json", "w") as f:
-        json.dump(output_data, f, indent=4)
-        
+    output_data = {"overall_stats": stats, "history": history}
+
+    # Save timestamped run file in runs/
+    os.makedirs(RUNS_DIR, exist_ok=True)
+    ts       = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    run_file = os.path.join(RUNS_DIR, f"run_{ts}.json")
+    with open(run_file, "w") as f:
+        json.dump(output_data, f, indent=2)
+
     if verbose:
-        print("\n--- Training Complete ---")
-        print(f"Total Reward:   {stats['total_reward']}")
-        print(f"Accuracy %:     {stats['accuracy'] * 100:.1f}%")
-        print(f"Saved: history.json")
-        
+        print(f"\n--- Training Complete ---")
+        print(f"Total Reward:  {total_reward}")
+        print(f"Session Acc.:  {stats['accuracy'] * 100:.1f}%")
+        print(f"Run saved to:  {run_file}")
+        print(f"Checkpoint:    {CHECKPOINT_FILE}")
+
     return output_data
 
-def analyze_history():
-    """Prints a summary of the latest training history."""
-    if not os.path.exists("history.json"):
-        print("Error: history.json not found. Run training first.")
+
+def analyze_history() -> None:
+    """Print a summary from the latest checkpoint."""
+    checkpoint = _load_checkpoint()
+    if not checkpoint["history"]:
+        print("No checkpoint found. Run training first.")
         return
-        
-    with open("history.json") as f:
-        data = json.load(f)
-        
-    stats = data["overall_stats"]
-    history = data["history"]
-    
+
+    stats   = checkpoint
+    history = checkpoint["history"]
+
     print("\n--- PERFORMANCE ANALYSIS ---")
-    print(f"Episodes:      {stats['episodes_run']}")
-    print(f"Accuracy:      {stats['accuracy'] * 100:.1f}%")
-    print(f"Total Reward:  {stats['total_reward']}")
-    print(f"Avg Reward:    {stats['average_reward']:.2f}")
-    print(f"Best Score:    {stats['best_score']}")
-    
-    sec_caught = stats.get("caught_security", 0)
-    log_caught = stats.get("caught_logic", 0)
-    print(f"Security Caught: {sec_caught}")
-    print(f"Logic Caught:    {log_caught}")
+    print(f"Episodes run:  {stats['episodes_run']}")
+    print(f"Total reward:  {stats['total_reward']}")
+
+    correct = sum(1 for h in history if h["correct"])
+    if history:
+        print(f"Accuracy:      {correct / len(history) * 100:.1f}%")
+        print(f"Best reward:   {max(h['reward'] for h in history)}")
+        print(f"Worst reward:  {min(h['reward'] for h in history)}")
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    mode = "default"
-    if len(sys.argv) > 1:
-        mode = sys.argv[1]
-        
+    mode = sys.argv[1] if len(sys.argv) > 1 else "default"
+
     if mode == "short":
         run_training(num_episodes=10)
     elif mode == "analyze":
         analyze_history()
+    elif mode == "fresh":
+        run_training(num_episodes=5, resume=False)
     else:
-        # Default behavior: run 5 episodes
         run_training(num_episodes=5)

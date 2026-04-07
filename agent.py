@@ -1,217 +1,337 @@
+"""
+agent.py — LLM-powered code reviewer with structured JSON output.
+
+Key improvements:
+  - API key validated at import time with a clear startup message
+  - Exceptions are logged (never silently swallowed)
+  - System prompt carries persona + schema; user turn carries only the code
+  - Two few-shot examples are included for reliable JSON compliance
+  - One automatic retry when the first response is malformed JSON
+  - Model / token constants come from config.py
+"""
+
 import json
-import random
+import logging
 import os
 import re
+import sys
 
-def build_prompt(code):
-    """Returns the full prompt string for the LLM."""
-    prompt = f"""
-You are an expert security-focused code reviewer. Your job is to find 
-bugs and vulnerabilities in Python code.
+from config import (
+    ANTHROPIC_MODEL,
+    OPENAI_MODEL,
+    MAX_TOKENS,
+)
 
-ALWAYS look for these specific patterns:
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Startup: API-key validation
+# ---------------------------------------------------------------------------
+
+def _check_api_keys() -> None:
+    """
+    Called once at module load.  Exits with a clear message if no usable
+    API key is present, rather than letting the server start and then die
+    mid-request with a cryptic SDK error.
+    """
+    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    has_openai    = bool(os.environ.get("OPENAI_API_KEY",    "").strip())
+
+    if not has_anthropic and not has_openai:
+        print(
+            "\n"
+            "╔══════════════════════════════════════════════════════════╗\n"
+            "║  ERROR: No LLM API key found.                           ║\n"
+            "║                                                          ║\n"
+            "║  Set at least one of:                                    ║\n"
+            "║    ANTHROPIC_API_KEY   (preferred — uses Claude Haiku)  ║\n"
+            "║    OPENAI_API_KEY      (fallback — uses GPT-4o-mini)    ║\n"
+            "║                                                          ║\n"
+            "║  Example (PowerShell):                                   ║\n"
+            "║    $env:ANTHROPIC_API_KEY = 'sk-ant-...'                ║\n"
+            "║                                                          ║\n"
+            "║  The server will NOT start without a key.               ║\n"
+            "╚══════════════════════════════════════════════════════════╝\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if has_anthropic:
+        logger.info("API key found: Anthropic (primary)")
+    if has_openai:
+        logger.info("API key found: OpenAI (fallback)")
+
+
+_check_api_keys()
+
+# ---------------------------------------------------------------------------
+# Prompt construction
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PROMPT = """\
+You are an expert security-focused code reviewer.
+Your ONLY job is to return a single valid JSON object — no markdown, no prose.
+
+JSON schema (all fields required):
+{
+  "type":      "flag" | "approve",
+  "category":  "security" | "logic" | "style" | "ok",
+  "line_hint": "<brief description of the suspicious line>",
+  "comment":   "<clear explanation of the issue, or empty string>",
+  "severity":  1-5
+}
+
+Rules:
+- "type" = "flag"    when a bug or vulnerability is present
+- "type" = "approve" when the code is clean  (category = "ok", severity = 0)
+- category must match the dominant bug class
+
+--- FEW-SHOT EXAMPLES ---
+
+Example 1 — SQL injection (flag):
+Code:
+  query = f"SELECT * FROM users WHERE name='{username}'"
+  result = db.execute(query)
+
+Response:
+{"type":"flag","category":"security","line_hint":"f-string query on line 1","comment":"User input interpolated directly into SQL query — classic SQL injection. Use parameterized queries instead.","severity":5}
+
+Example 2 — clean code (approve):
+Code:
+  def add(a: int, b: int) -> int:
+      return a + b
+
+Response:
+{"type":"approve","category":"ok","line_hint":"","comment":"","severity":0}
+
+Example 3 — off-by-one (flag):
+Code:
+  for i in range(len(items) - 1):
+      process(items[i])
+
+Response:
+{"type":"flag","category":"logic","line_hint":"range(len(items) - 1) in for loop","comment":"Off-by-one: range(len(x)-1) skips the last element. Use range(len(x)) or enumerate(x) instead.","severity":3}
+--- END EXAMPLES ---
+
+ALWAYS look for:
 SECURITY (severity 4-5):
-- SQL queries built with f-strings or string concatenation using variables
-  Example: f"SELECT * FROM users WHERE name='{{username}}'" → SQL injection
-- Passwords stored or passed without hashing (no hashlib, bcrypt, sha256)
-  Example: db.insert({{'password': password}}) → plain text password
-- Hardcoded secrets, API keys, or credentials in code
-- Missing authentication or authorization checks
-
-LOGIC (severity 2-4):  
-- range(len(x) - 1) instead of range(len(x)) → off-by-one, skips last item
-- Using > instead of >= or < instead of <= in comparisons
-- Division without checking for zero first
-- Functions that never return a value in all code paths
-
-INSTRUCTIONS:
-- Be aggressive — if you see any of the above patterns, FLAG it
-- Do not approve code that contains these patterns
-- For plain text passwords: if you see a variable assigned directly 
-  to another variable called 'password' or 'hashed' without calling 
-  any hash function, that IS a bug
-- Respond ONLY with valid JSON, no markdown, no explanation
-
-JSON format:
-{{
-  "type": "flag" or "approve",
-  "category": "security" or "logic" or "style" or "ok", 
-  "line_hint": "specific line description",
-  "comment": "clear explanation of the vulnerability",
-  "severity": 1-5
-}}
-
-Code to review:
-{code}
+  - SQL built with f-strings / concatenation
+  - Passwords stored/passed without hashing
+  - Hardcoded secrets, API keys, or tokens
+LOGIC (severity 2-4):
+  - range(len(x) - 1) off-by-one
+  - Strict > / < where >= / <= is needed
+  - Division without zero-check
+  - Missing return in all code paths
 """
-    return prompt.strip()
 
-def call_llm(prompt):
-    """Attempts to call LLM APIs (Anthropic/OpenAI) with fallback logic."""
-    # Attempt Anthropic
-    try:
-        import anthropic
-        client = anthropic.Anthropic()
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return message.content[0].text
-    except Exception:
-        pass
-        
-    # Fallback to OpenAI
-    try:
-        import openai
-        client = openai.OpenAI()
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=300,
-            messages=[
-                {"role": "system", "content": "You are a code reviewer. Respond only in JSON."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return response.choices[0].message.content
-    except Exception:
-        pass
-        
-    # Return indicator for mock fallback
+_RETRY_SUFFIX = (
+    "\n\nYour previous response was not valid JSON. "
+    "Return ONLY the JSON object with the exact schema above — "
+    "no markdown fences, no extra keys, no prose."
+)
+
+
+def build_user_message(code: str, retry: bool = False) -> str:
+    """Return the user-turn content (code only, plus retry note if needed)."""
+    msg = f"Review this code:\n\n{code}"
+    if retry:
+        msg += _RETRY_SUFFIX
+    return msg
+
+
+# ---------------------------------------------------------------------------
+# LLM call
+# ---------------------------------------------------------------------------
+
+def call_llm(prompt: str, *, system: str | None = None) -> str | None:
+    """
+    Try Anthropic first, then OpenAI.  Returns the raw text response or None.
+    Exceptions are always logged — never silently swallowed.
+    """
+    # --- Anthropic ---
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if anthropic_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=anthropic_key)
+            kwargs: dict = {
+                "model":      ANTHROPIC_MODEL,
+                "max_tokens": MAX_TOKENS,
+                "messages":   [{"role": "user", "content": prompt}],
+            }
+            if system:
+                kwargs["system"] = system
+            message = client.messages.create(**kwargs)
+            return message.content[0].text
+        except Exception as exc:
+            logger.error("Anthropic call failed: %s: %s", type(exc).__name__, exc)
+
+    # --- OpenAI fallback ---
+    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if openai_key:
+        try:
+            import openai
+            client = openai.OpenAI(api_key=openai_key)
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                max_tokens=MAX_TOKENS,
+                messages=messages,
+            )
+            return response.choices[0].message.content
+        except Exception as exc:
+            logger.error("OpenAI call failed: %s: %s", type(exc).__name__, exc)
+
+    logger.warning("All LLM providers failed — falling back to mock reviewer.")
     return None
 
-def mock_review(code):
-    """Simulated AI reviewer for when APIs are unavailable or fail."""
+
+# ---------------------------------------------------------------------------
+# JSON parsing helper
+# ---------------------------------------------------------------------------
+
+def _parse_json(raw: str) -> dict | None:
+    """Try direct parse, then regex-extracted substring."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"(\{.*\})", raw, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Mock reviewer (last-resort fallback)
+# ---------------------------------------------------------------------------
+
+def mock_review(code: str) -> dict:
+    """
+    Rule-based fallback used only when both LLM providers are unavailable.
+    Checks for well-known patterns; deliberately conservative to avoid
+    false confidence.
+    """
     code_lower = code.lower()
-    
-    # 1. Plain text password storage (highly aggressive)
-    if 'hashed = password' in code_lower:
+
+    if "hashed = password" in code_lower or (
+        "password" in code_lower and "hash" not in code_lower and "bcrypt" not in code_lower
+    ):
         return {
             "type": "flag",
             "category": "security",
             "line_hint": "password assignment line",
-            "comment": "Password assigned without hashing — plain text storage vulnerability detected.",
-            "severity": 5
+            "comment": "Password assigned without hashing — plain-text storage vulnerability.",
+            "severity": 5,
         }
-    
-    # 2. SQL Injection
+
     if 'f"select' in code_lower or "f'select" in code_lower:
         return {
             "type": "flag",
             "category": "security",
             "line_hint": "database query line",
-            "comment": "Vulnerable SQL query detected: using f-strings for database access allows SQL injection.",
-            "severity": 5
+            "comment": "Vulnerable SQL query: f-string interpolation allows SQL injection.",
+            "severity": 5,
         }
-        
-    # 3. Off-by-one errors (Always flag if found)
-    if 'range(len(' in code_lower:
+
+    if "range(len(" in code_lower:
         return {
             "type": "flag",
             "category": "logic",
-            "line_hint": "loop range function",
-            "comment": "Detected range(len()) pattern which is highly prone to off-by-one logic errors.",
-            "severity": 3
+            "line_hint": "loop range call",
+            "comment": "range(len(x)) pattern detected — verify for off-by-one errors.",
+            "severity": 3,
         }
 
-    # 4. Comparison logic (> or < without =)
-    if ('> amount' in code_lower or '< amount' in code_lower) and '>=' not in code_lower and '<=' not in code_lower:
+    if ("> amount" in code_lower or "< amount" in code_lower) and ">=" not in code_lower and "<=" not in code_lower:
         return {
             "type": "flag",
             "category": "logic",
             "line_hint": "comparison check",
-            "comment": "Strict inequality (> or <) used in balance check; likely misses the equality edge case.",
-            "severity": 4
+            "comment": "Strict > / < in balance check; may miss the equality edge case.",
+            "severity": 4,
         }
-        
-    # 5. General password check
-    if 'password' in code_lower and 'hash' not in code_lower:
-        return {
-            "type": "flag",
-            "category": "security",
-            "line_hint": "password handling",
-            "comment": "Sensitive password data handled in plain text without cryptographic hashing.",
-            "severity": 5
-        }
-             
-    # Default: Approve
+
     return {
         "type": "approve",
         "category": "ok",
         "line_hint": "",
         "comment": "",
-        "severity": 0
+        "severity": 0,
     }
 
-def review(code):
-    """Main entry point for code review logic."""
-    prompt = build_prompt(code)
-    raw_response = call_llm(prompt)
-    
-    review_dict = None
-    
-    if raw_response:
-        try:
-            # Direct parse
-            review_dict = json.loads(raw_response)
-        except json.JSONDecodeError:
-            # Extract JSON substring if full parse fails
-            match = re.search(r'(\{.*\})', raw_response, re.DOTALL)
-            if match:
-                try:
-                    review_dict = json.loads(match.group(1))
-                except json.JSONDecodeError:
-                    pass
-                    
-    # Fallback if LLM failed or JSON parsing failed
-    if review_dict is None:
-        review_dict = mock_review(code)
-        
-    # Validate required keys and fill defaults
-    defaults = {
-        "type": "approve",
-        "category": "ok",
-        "line_hint": "",
-        "comment": "",
-        "severity": 0
-    }
-    
-    for key, val in defaults.items():
-        if key not in review_dict:
-            review_dict[key] = val
-            
-    return review_dict
 
-# TEST BLOCK
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+_REQUIRED_KEYS = {"type", "category", "line_hint", "comment", "severity"}
+_DEFAULTS = {"type": "approve", "category": "ok", "line_hint": "", "comment": "", "severity": 0}
+
+
+def review(code: str) -> dict:
+    """
+    Review a code snippet.
+
+    Flow:
+      1. Call LLM with system prompt + user message.
+      2. If JSON is malformed, retry once with an explicit correction hint.
+      3. If both attempts fail, fall back to the rule-based mock reviewer.
+      4. Fill any missing keys with safe defaults.
+    """
+    user_msg = build_user_message(code)
+    raw = call_llm(user_msg, system=_SYSTEM_PROMPT)
+    result = _parse_json(raw)
+
+    if result is None:
+        # One retry: tell the model its output was invalid
+        logger.warning("LLM returned malformed JSON — retrying with correction hint.")
+        user_msg_retry = build_user_message(code, retry=True)
+        raw_retry = call_llm(user_msg_retry, system=_SYSTEM_PROMPT)
+        result = _parse_json(raw_retry)
+
+    if result is None:
+        logger.warning("Retry also failed — using mock reviewer.")
+        result = mock_review(code)
+
+    # Fill missing keys with safe defaults
+    for key, val in _DEFAULTS.items():
+        result.setdefault(key, val)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Test block (run with: python agent.py)
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
-    test1 = """def login(username, password, db):
-    query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"
-    result = db.execute(query)
-    return result is not None"""
-    
-    test2 = """def find_max(numbers):
-    max_val = numbers[0]
-    for i in range(len(numbers) - 1):
-        if numbers[i] > max_val:
-            max_val = numbers[i]
-    return max_val"""
-    
-    test3 = """def save_user(username, password, db):
-    db.insert('users', {'username': username, 'password': password})"""
-    
-    tests = [
-        ("Login Function (SQLi)", test1),
-        ("Find Max (Off-by-one)", test2),
-        ("Save User (Plain Pass)", test3)
+    _TESTS = [
+        ("SQL injection", "def login(u, p, db):\n    q = f\"SELECT * FROM users WHERE username='{u}'\"\n    return db.execute(q)"),
+        ("Off-by-one",    "def find_max(nums):\n    mx = nums[0]\n    for i in range(len(nums) - 1):\n        if nums[i] > mx: mx = nums[i]\n    return mx"),
+        ("Plain password", "def save(u, pw, db):\n    db.insert('users', {'username': u, 'password': pw})"),
+        ("Clean code",    "def add(a: int, b: int) -> int:\n    return a + b"),
     ]
-    
-    print("Running Agent Code Review Tests...\n")
-    
-    for name, code in tests:
-        print(f"TEST: {name}")
-        # To make results predictable for this specific run, we could mock random
-        # but let's just let it run.
+
+    print("=== Agent Tests ===\n")
+    for name, code in _TESTS:
+        print(f"[{name}]")
         result = review(code)
-        print(f"Result: {json.dumps(result, indent=2)}")
-        print("-" * 40)
+        print(json.dumps(result, indent=2))
+        print()
