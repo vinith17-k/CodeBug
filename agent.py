@@ -42,6 +42,12 @@ def _check_api_keys() -> None:
     API key is present, rather than letting the server start and then die
     mid-request with a cryptic SDK error.
     """
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
     has_openai    = bool(os.environ.get("OPENAI_API_KEY",    "").strip())
 
@@ -49,20 +55,18 @@ def _check_api_keys() -> None:
         print(
             "\n"
             "╔══════════════════════════════════════════════════════════╗\n"
-            "║  ERROR: No LLM API key found.                           ║\n"
+            "║  WARNING: No LLM API key found.                          ║\n"
             "║                                                          ║\n"
             "║  Set at least one of:                                    ║\n"
-            "║    ANTHROPIC_API_KEY   (preferred — uses Claude Haiku)  ║\n"
-            "║    OPENAI_API_KEY      (fallback — uses GPT-4o-mini)    ║\n"
+            "║    ANTHROPIC_API_KEY   (preferred — uses Claude Haiku)   ║\n"
+            "║    OPENAI_API_KEY      (fallback — uses GPT-4o-mini)     ║\n"
             "║                                                          ║\n"
-            "║  Example (PowerShell):                                   ║\n"
-            "║    $env:ANTHROPIC_API_KEY = 'sk-ant-...'                ║\n"
-            "║                                                          ║\n"
-            "║  The server will NOT start without a key.               ║\n"
+            "║  The server will start, but ALL reviews will fall back   ║\n"
+            "║  to the local mock reviewer.                             ║\n"
             "╚══════════════════════════════════════════════════════════╝\n",
             file=sys.stderr,
         )
-        sys.exit(1)
+        return
 
     if has_anthropic:
         logger.info("API key found: Anthropic (primary)")
