@@ -1,0 +1,29 @@
+﻿Running Agent Code Review Tests...
+
+TEST: Login Function (SQLi)
+Result: {
+  "type": "flag",
+  "category": "security",
+  "line_hint": "database query line",
+  "comment": "Possible SQL injection \u2014 query uses string interpolation instead of parameterized queries.",
+  "severity": 5
+}
+----------------------------------------
+TEST: Find Max (Off-by-one)
+Result: {
+  "type": "approve",
+  "category": "ok",
+  "line_hint": "",
+  "comment": "",
+  "severity": 0
+}
+----------------------------------------
+TEST: Save User (Plain Pass)
+Result: {
+  "type": "flag",
+  "category": "security",
+  "line_hint": "password storage or transmission",
+  "comment": "Password may be stored or transmitted without hashing. Secure multi-factor authentication and hashing are recommended.",
+  "severity": 4
+}
+----------------------------------------

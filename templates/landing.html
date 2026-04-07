@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeReview AI | The RL-Powered Code Review Agent</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #7c3aed;
+            --secondary: #a78bfa;
+            --success: #10b981;
+            --bg: #ffffff;
+            --bg-accent: #f8f7ff;
+            --text: #0f172a;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --radius: 12px;
+            --radius-pill: 999px;
+            --shadow: 0 4px 24px rgba(124, 58, 237, 0.08);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg); color: var(--text); overflow-x: hidden; }
+
+        /* --- Navbar --- */
+        nav {
+            position: fixed; top: 0; left: 0; right: 0; height: 64px;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            z-index: 1000;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .nav-container { width: 100%; max-width: 1200px; padding: 0 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.25rem; }
+        .logo-circle { width: 24px; height: 24px; background: #000; border-radius: 50%; }
+        .logo-ai { background: #f3efff; color: var(--primary); padding: 2px 8px; border-radius: var(--radius-pill); font-size: 0.7rem; font-weight: 800; }
+        .nav-links { display: flex; gap: 2rem; }
+        .nav-links a { text-decoration: none; color: var(--text-muted); font-size: 0.9rem; font-weight: 500; }
+        .btn-pill { background: var(--primary); color: white; padding: 10px 24px; border-radius: var(--radius-pill); text-decoration: none; font-weight: 600; font-size: 0.9rem; transition: transform 0.2s; }
+        .btn-pill:hover { transform: scale(1.03); }
+
+        /* --- Hero --- */
+        .hero { 
+            position: relative; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+            background: radial-gradient(circle at center, rgba(124, 58, 237, 0.03) 0%, #ffffff 70%);
+            padding: 0 2rem; text-align: center;
+        }
+        .dot-grid { position: absolute; inset: 0; background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 32px 32px; opacity: 0.2; pointer-events: none; }
+        .hero-orb { position: absolute; width: 600px; height: 600px; background: linear-gradient(135deg, var(--primary), var(--secondary)); opacity: 0.12; filter: blur(80px); border-radius: 50%; animation: orbit 20s infinite linear; pointer-events: none; }
+        @keyframes orbit { from { transform: rotate(0deg) translateX(150px) rotate(0deg); } to { transform: rotate(360deg) translateX(150px) rotate(-360deg); } }
+
+        .hero-content { z-index: 10; max-width: 800px; }
+        .hero-pill { display: inline-block; background: #f3efff; color: var(--primary); padding: 4px 16px; border-radius: var(--radius-pill); font-size: 0.8rem; font-weight: 700; margin-bottom: 1.5rem; }
+        h1 { font-size: 3.5rem; font-weight: 800; line-height: 1.1; margin-bottom: 1.5rem; letter-spacing: -0.03em; }
+        .purple-gradient { background: linear-gradient(135deg, var(--primary), var(--secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero-sub { font-size: 1.125rem; color: var(--text-muted); max-width: 500px; margin: 0 auto 2.5rem; }
+        .cta-row { display: flex; gap: 1rem; justify-content: center; }
+        .btn-hero { padding: 14px 32px; border-radius: var(--radius-pill); font-weight: 700; font-size: 1rem; text-decoration: none; transition: 0.2s; border: 1px solid transparent; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-secondary { background: white; border-color: var(--primary); color: var(--primary); }
+
+        /* --- Floating Cards --- */
+        .float-card { position: absolute; background: white; border: 1px solid var(--border); border-radius: 16px; padding: 12px 16px; box-shadow: var(--shadow); z-index: 5; animation: float 3s infinite ease-in-out; }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+        .fc-1 { top: 20%; left: 10%; animation-delay: 0s; }
+        .fc-2 { top: 15%; right: 12%; animation-delay: 1.5s; }
+        .fc-3 { bottom: 15%; left: 15%; background: var(--text); color: white; animation-delay: 0.8s; }
+        .fc-4 { bottom: 20%; right: 10%; animation-delay: 2s; }
+        .avatar-small { width: 20px; height: 20px; background: var(--primary); border-radius: 50%; display: inline-block; vertical-align: middle; margin-right: 8px; }
+
+        /* --- Sections --- */
+        section { padding: 100px 0; display: flex; flex-direction: column; align-items: center; }
+        .section-light { background: var(--bg-accent); }
+        .section-title { font-size: 2.25rem; font-weight: 800; margin-bottom: 1rem; text-align: center; }
+        .section-sub { color: var(--text-muted); text-align: center; max-width: 600px; margin-bottom: 4rem; }
+
+        /* --- Stats --- */
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2rem; width: 100%; max-width: 1200px; padding: 0 2rem; }
+        .stat-card { background: white; padding: 2rem; border-radius: 16px; text-align: center; border-top: 3px solid var(--primary); box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
+        .stat-num { font-size: 2.5rem; font-weight: 800; color: var(--primary); margin-bottom: 0.5rem; }
+
+        /* --- Features --- */
+        .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem; width: 100%; max-width: 1200px; padding: 0 2rem; }
+        .feature-card { background: white; border: 1px solid var(--border); border-radius: 16px; padding: 2rem; transition: all 0.3s; }
+        .feature-card:hover { transform: translateY(-4px); box-shadow: var(--shadow); border-color: var(--primary); }
+        .icon-circle { width: 44px; height: 44px; border-radius: 50%; margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: center; }
+
+        /* --- How It Works --- */
+        .how-grid { display: flex; justify-content: center; gap: 4rem; width: 100%; max-width: 1200px; position: relative; }
+        .how-grid::after { content: ''; position: absolute; top: 22px; width: 60%; height: 2px; border-top: 2px dashed var(--border); z-index: -1; }
+        .step { flex: 1; text-align: center; max-width: 300px; }
+        .step-num { width: 44px; height: 44px; background: var(--primary); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 2rem; font-weight: 700; border: 4px solid white; box-shadow: 0 4px 12px rgba(124, 58, 237, 0.2); }
+        .step-preview { background: white; border: 1px solid var(--border); border-radius: 12px; height: 120px; margin-top: 1.5rem; padding: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; font-size: 0.7rem; font-family: monospace; }
+
+        /* --- Mockup --- */
+        .mockup { background: white; border: 1px solid var(--border); border-radius: 20px; width: 100%; max-width: 900px; box-shadow: 0 40px 100px -20px rgba(15, 23, 42, 0.15); overflow: hidden; }
+        .mockup-header { background: #0f172a; padding: 8px 16px; display: flex; align-items: center; gap: 8px; color: white; font-size: 0.75rem; }
+        .dots { display: flex; gap: 6px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; }
+        .mockup-content { padding: 40px; background: #fcfbff; display: grid; grid-template-columns: 1fr 0.6fr 0.8fr; gap: 20px; height: 300px; }
+
+        /* --- Footer --- */
+        footer { background: #0f172a; color: white; padding: 80px 0 40px; display: flex; flex-direction: column; align-items: center; }
+        .footer-content { width: 100%; max-width: 1200px; border-bottom: 1px solid #1e293b; padding-bottom: 40px; margin-bottom: 40px; display: flex; justify-content: space-between; padding: 0 2rem; }
+        .footer-tag { color: var(--text-muted); font-size: 0.9rem; max-width: 300px; margin-top: 1rem; }
+        .footer-links { display: flex; gap: 4rem; }
+        .f-col h4 { font-size: 1rem; margin-bottom: 1.5rem; }
+        .f-col a { display: block; color: var(--text-muted); text-decoration: none; margin-bottom: 0.75rem; font-size: 0.9rem; }
+        .copy { color: #475569; font-size: 0.8rem; }
+
+        .fade-in-section { opacity: 0; transform: translateY(30px); transition: all 0.8s ease; }
+        .fade-in-section.visible { opacity: 1; transform: translateY(0); }
+    </style>
+</head>
+<body>
+
+    <nav>
+        <div class="nav-container">
+            <div class="logo">
+                <div class="logo-circle"></div>
+                CodeReview <span class="logo-ai">AI</span>
+            </div>
+            <div class="nav-links">
+                <a href="#">Home</a>
+                <a href="#features">Features</a>
+                <a href="#how">How It Works</a>
+                <a href="#" onclick="alert('Demo coming soon! Hit the launch button.')">Pricing</a>
+            </div>
+            <a href="/dashboard" class="btn-pill">View Dashboard →</a>
+        </div>
+    </nav>
+
+    <div class="hero">
+        <div class="dot-grid"></div>
+        <div class="hero-orb"></div>
+
+        <!-- Floating Cards -->
+        <div class="float-card fc-1">
+            <div class="avatar-small"></div> <span>ep_003</span>
+            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">SQL Injection Found</div>
+            <div style="width: 100px; height: 4px; background: rgba(16,185,129,0.1); border-radius: 2px; margin-top: 8px;">
+                <div style="width: 80%; height: 100%; background: var(--success); border-radius: 2px;"></div>
+            </div>
+        </div>
+        <div class="float-card fc-2">
+            <span style="font-size: 0.6rem; background: #fee2e2; color: #ef4444; font-weight: 800; padding: 2px 6px; border-radius: 4px;">SECURITY</span>
+            <div style="font-size: 0.9rem; font-weight: 700; margin: 4px 0;">+38 points</div>
+            <div style="font-size: 0.7rem; color: #10b981;">Correct Catch ✓</div>
+        </div>
+        <div class="float-card fc-3">
+             <div class="avatar-small" style="background:#fff"></div> <span style="font-size:0.8rem">Trained AI</span>
+             <div style="font-size: 1.1rem; font-weight: 800; margin-top: 4px; color: var(--success);">94.2% Accurate</div>
+        </div>
+        <div class="float-card fc-4" style="width: 160px; font-family: monospace; font-size: 0.6rem;">
+            <div style="color: var(--primary); margin-bottom: 4px;">Fix Suggested:</div>
+            <div style="background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid var(--border);">
+               <span style="color: #ef4444">- query = f"..."</span><br>
+               <span style="color: #10b981">+ query = db.exec(...)</span>
+            </div>
+        </div>
+
+        <div class="hero-content">
+            <div class="hero-pill">★ RL-Powered Code Review</div>
+            <h1>Catch Bugs Before<br>They Catch You.<br><span class="purple-gradient">With AI That Learns.</span></h1>
+            <p class="hero-sub">An RL-trained agent that reviews your code like a senior engineer. Catches vulnerabilities and suggests fixes that improve every day.</p>
+            <div class="cta-row">
+                <a href="/dashboard" class="btn-hero btn-primary">Try Live Demo →</a>
+                <a href="#how" class="btn-hero btn-secondary">See How It Works</a>
+            </div>
+            <div style="margin-top: 2rem; display: flex; align-items: center; justify-content: center; gap: 12px; font-size: 0.9rem; color: var(--text-muted);">
+                 <div style="display: flex; margin-right: 8px;">
+                    <div style="width: 24px; height: 24px; border-radius: 50%; background: #e0e7ff; border: 2px solid white; margin-left: -8px;"></div>
+                    <div style="width: 24px; height: 24px; border-radius: 50%; background: #ede9fe; border: 2px solid white; margin-left: -8px;"></div>
+                    <div style="width: 24px; height: 24px; border-radius: 50%; background: #f1f5f9; border: 2px solid white; margin-left: -8px;"></div>
+                 </div>
+                 Trusted by devs • ⭐⭐⭐⭐⭐ • 500+ bugs caught
+            </div>
+        </div>
+    </div>
+
+    <section class="section-light fade-in-section">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-num">500+</div>
+                <div class="stat-label">Bugs Caught</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-num">94%</div>
+                <div class="stat-label">Accuracy</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-num">4</div>
+                <div class="stat-label">Module Types</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-num">38</div>
+                <div class="stat-label">Max Score</div>
+            </div>
+        </div>
+    </section>
+
+    <section id="features" class="fade-in-section">
+        <h2 class="section-title">Everything a Senior Engineer Looks For</h2>
+        <p class="section-sub">We trained our RL agent on thousands of code patterns to catch the errors most developers miss in a hurry.</p>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="icon-circle" style="background:#f3efff; color:var(--primary)">🛡️</div>
+                <h3>Security Detection</h3>
+                <p class="hero-sub" style="font-size:0.9rem; margin-top:10px">Catches SQL injection, plain-text passwords, and exposed API credentials.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon-circle" style="background:#f0eefd; color:#10b981">⚖️</div>
+                <h3>Logic Bug Finding</h3>
+                <p class="hero-sub" style="font-size:0.9rem; margin-top:10px">Identifies off-by-one errors, incorrect comparison operators, and missing edge cases.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon-circle" style="background:#eef2ff; color:#3b82f6">💡</div>
+                <h3>Instant Fixes</h3>
+                <p class="hero-sub" style="font-size:0.9rem; margin-top:10px">Provides immediate, secure fixed code versions with an interactive diff view.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon-circle" style="background:#fff7ed; color:#f59e0b">🔄</div>
+                <h3>RL Training Loop</h3>
+                <p class="hero-sub" style="font-size:0.9rem; margin-top:10px">The agent improves after every episode using deep Q-learning reward cycles.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon-circle" style="background:#fdf2f2; color:#ef4444">📂</div>
+                <h3>Multi-file Support</h3>
+                <p class="hero-sub" style="font-size:0.9rem; margin-top:10px">Upload any .py, .js, .ts, or .java file for a comprehensive security analysis.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon-circle" style="background:#f5f3ff; color:var(--purple)">📊</div>
+                <h3>Proof of Learning</h3>
+                <p class="hero-sub" style="font-size:0.9rem; margin-top:10px">Visualize the "Before vs After" results of the RL training process in real-time.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="how" class="section-light fade-in-section">
+        <h2 class="section-title">How The RL Loop Works</h2>
+        <div class="how-grid" style="margin-top: 4rem;">
+            <div class="step">
+                <div class="step-num">1</div>
+                <h4>Bug Bank</h4>
+                <p class="line-hint" style="margin-top:10px">We secretly inject real vulnerabilities into clean code snippets.</p>
+                <div class="step-preview"><div style="color:#ef4444">range(len(x)-1)</div></div>
+            </div>
+            <div class="step">
+                <div class="step-num">2</div>
+                <h4>AI Actions</h4>
+                <p class="line-hint" style="margin-top:10px">The agent reads the code and guesses if there's a bug.</p>
+                <div class="step-preview"><span class="logo-ai" style="background:#ef4444; color:#fff">FLAG</span></div>
+            </div>
+            <div class="step">
+                <div class="step-num">3</div>
+                <h4>Reward & Learn</h4>
+                <p class="line-hint" style="margin-top:10px">Correct catch earns +25 points. Misses lose -20.</p>
+                <div class="step-preview"><svg width="100" height="50"><path d="M0 50 L20 40 L40 45 L60 20 L80 10 L100 0" stroke="#7c3aed" fill="none" stroke-width="2"/></svg></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="fade-in-section">
+        <h2 class="section-title">Ready to catch some bugs?</h2>
+        <div class="mockup" style="margin-top: 3rem;">
+            <div class="mockup-header">
+                <div class="dots">
+                    <div class="dot" style="background:#ff5f56"></div>
+                    <div class="dot" style="background:#ffbd2e"></div>
+                    <div class="dot" style="background:#27c93f"></div>
+                </div>
+                RL Code Reviewer — Dashboard
+            </div>
+            <div class="mockup-content">
+                <div style="border-right: 1px solid #eee; padding-right: 15px; font-family: monospace;">
+                    <div style="color:#64748b">1 def login():</div>
+                    <div style="color:#64748b">2   pass = ...</div>
+                    <div style="background: rgba(239,68,68,0.1); color:#ef4444">3   query = f"..."</div>
+                    <div style="color:#64748b">4   db.exec(query)</div>
+                </div>
+                <div style="padding: 0 10px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                    <div style="font-size: 2rem; font-weight: 800; color:#10b981">+38</div>
+                    <div class="logo-ai" style="background:#10b981; color:#fff; font-size: 10px;">CORRECT</div>
+                </div>
+                <div style="padding-left: 15px; display: flex; align-items: center;">
+                     <div style="background: white; border: 1px solid #eee; padding: 15px; border-radius: 8px; width: 100%;">
+                        <div style="font-size: 0.6rem; color:var(--text-muted)">ACCURACY IMPROVEMENT</div>
+                        <div style="font-size: 1.2rem; font-weight: 800; color:var(--primary)">+64.2%</div>
+                     </div>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top: 3rem;">
+            <a href="/dashboard" class="btn-pill" style="padding: 16px 40px; font-size: 1.1rem;">Launch Live Dashboard →</a>
+        </div>
+    </section>
+
+    <footer>
+        <div class="footer-content">
+            <div class="f-col">
+                <div class="logo" style="color:white">CodeReview <span class="logo-ai">AI</span></div>
+                <p class="footer-tag">AI-powered code review that actually learns. Built for the Code With Antigravity Hackathon.</p>
+            </div>
+            <div class="footer-links">
+                <div class="f-col">
+                    <h4>Platform</h4>
+                    <a href="/dashboard">Dashboard</a>
+                    <a href="#how">How It Works</a>
+                    <a href="#">Pricing</a>
+                </div>
+                <div class="f-col">
+                    <h4>About</h4>
+                    <a href="#">GitHub</a>
+                    <a href="#">Devpost</a>
+                    <a href="#">Team</a>
+                </div>
+            </div>
+        </div>
+        <div class="copy">© 2025 RL Code Reviewer. Built with ♥ for Antigravity Hackathon</div>
+    </footer>
+
+    <script>
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                }
+            });
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('.fade-in-section').forEach(section => {
+            observer.observe(section);
+        });
+    </script>
+</body>
+</html>

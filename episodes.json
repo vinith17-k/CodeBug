@@ -1,0 +1,22 @@
+[
+    {
+        "episode_id": "ep_001",
+        "snippet_id": "login_func",
+        "code": "def login(username, password):\n    # Secure parameterized query\n    query = f\"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'\"\n    user = db.execute(query)\n    if user:\n        return True\n    return False"
+    },
+    {
+        "episode_id": "ep_002",
+        "snippet_id": "money_transfer",
+        "code": "def transfer(from_account, to_account, amount):\n    if from_account.balance > amount:\n        from_account.balance -= amount\n        to_account.balance += amount\n        return True\n    return False"
+    },
+    {
+        "episode_id": "ep_003",
+        "snippet_id": "password_saver",
+        "code": "\ndef save_password(password):\n    # Hash password before saving\n    hashed = password\n    db.save_user_password(hashed)"
+    },
+    {
+        "episode_id": "ep_004",
+        "snippet_id": "find_max",
+        "code": "def find_max(numbers):\n    if not numbers:\n        return None\n    max_val = numbers[0]\n    for i in range(len(numbers) - 1):\n        if numbers[i] > max_val:\n            max_val = numbers[i]\n    return max_val"
+    }
+]

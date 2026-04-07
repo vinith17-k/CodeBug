@@ -1,0 +1,133 @@
+﻿RUNNING GRADER TESTS...
+
+CASE 1:
+GRADE SUMMARY
+-------------------------
+Reward:    +38
+Correct:   Yes
+Bug was:   security (severity 5)
+
+Breakdown:
+  +25: caught a security vulnerability
+  +5: severity rating was exact
+  +5: detailed comment provided
+  +3: line location was specified
+-------------------------
+Total: +38
+
+CASE 2:
+GRADE SUMMARY
+-------------------------
+Reward:    +20
+Correct:   Yes
+Bug was:   logic (severity 3)
+
+Breakdown:
+  +15: caught a logic bug
+  +5: severity rating was exact
+  +0: comment too short or missing
+  +0: no line location given
+-------------------------
+Total: +20
+
+CASE 3:
+GRADE SUMMARY
+-------------------------
+Reward:    -10
+Correct:   No
+Bug was:   security (severity 5)
+
+Breakdown:
+  -10: false positive ù flagged as 'logic' but was 'security'
+-------------------------
+Total: -10
+
+CASE 4:
+GRADE SUMMARY
+-------------------------
+Reward:    -25
+Correct:   No
+Bug was:   security (severity 5)
+
+Breakdown:
+  -25: missed a critical severity-5 bug (security)
+-------------------------
+Total: -25
+
+CASE 5:
+GRADE SUMMARY
+-------------------------
+Reward:    -12
+Correct:   No
+Bug was:   logic (severity 3)
+
+Breakdown:
+  -12: missed a medium severity-3 bug (logic)
+-------------------------
+Total: -12
+
+CASE 6:
+GRADE SUMMARY
+-------------------------
+Reward:    +38
+Correct:   Yes
+Bug was:   security (severity 5)
+
+Breakdown:
+  +25: caught a security vulnerability
+  +5: severity rating was exact
+  +5: detailed comment provided
+  +3: line location was specified
+-------------------------
+Total: +38
+
+BATCH RESULTS:
+{'accuracy': 0.5,
+ 'average_reward': 8.166666666666666,
+ 'best_score': 38,
+ 'caught_logic': 1,
+ 'caught_security': 2,
+ 'false_positives': 1,
+ 'missed_bugs': 2,
+ 'results': [{'breakdown': ['+25: caught a security vulnerability',
+                            '+5: severity rating was exact',
+                            '+5: detailed comment provided',
+                            '+3: line location was specified'],
+              'bug_severity': 5,
+              'bug_type': 'security',
+              'correct': True,
+              'reward': 38},
+             {'breakdown': ['+15: caught a logic bug',
+                            '+5: severity rating was exact',
+                            '+0: comment too short or missing',
+                            '+0: no line location given'],
+              'bug_severity': 3,
+              'bug_type': 'logic',
+              'correct': True,
+              'reward': 20},
+             {'breakdown': ["-10: false positive ù flagged as 'logic' but was "
+                            "'security'"],
+              'bug_severity': 5,
+              'bug_type': 'security',
+              'correct': False,
+              'reward': -10},
+             {'breakdown': ['-25: missed a critical severity-5 bug (security)'],
+              'bug_severity': 5,
+              'bug_type': 'security',
+              'correct': False,
+              'reward': -25},
+             {'breakdown': ['-12: missed a medium severity-3 bug (logic)'],
+              'bug_severity': 3,
+              'bug_type': 'logic',
+              'correct': False,
+              'reward': -12},
+             {'breakdown': ['+25: caught a security vulnerability',
+                            '+5: severity rating was exact',
+                            '+5: detailed comment provided',
+                            '+3: line location was specified'],
+              'bug_severity': 5,
+              'bug_type': 'security',
+              'correct': True,
+              'reward': 38}],
+ 'total_reward': 49,
+ 'worst_score': -25}

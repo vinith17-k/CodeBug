@@ -1,0 +1,42 @@
+[
+    {
+        "episode_id": "ep_001",
+        "snippet_id": "login_func",
+        "bug": {
+            "type": "security",
+            "severity": 5,
+            "description": "SQL Injection vulnerability: using f-strings for database queries allows attackers to execute arbitrary SQL.",
+            "line_hint": 3
+        }
+    },
+    {
+        "episode_id": "ep_002",
+        "snippet_id": "money_transfer",
+        "bug": {
+            "type": "logic",
+            "severity": 4,
+            "description": "Logic error: balance check uses '>' instead of '>=', preventing transfers when balance matches exactly.",
+            "line_hint": 2
+        }
+    },
+    {
+        "episode_id": "ep_003",
+        "snippet_id": "password_saver",
+        "bug": {
+            "type": "security",
+            "severity": 5,
+            "description": "Security flaw: password is stored in plain text without any hashing mechanism.",
+            "line_hint": 1
+        }
+    },
+    {
+        "episode_id": "ep_004",
+        "snippet_id": "find_max",
+        "bug": {
+            "type": "logic",
+            "severity": 3,
+            "description": "Off-by-one error: the loop range is shortened, so the last element will be skipped.",
+            "line_hint": 5
+        }
+    }
+]
