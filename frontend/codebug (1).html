@@ -544,27 +544,8 @@ def get_user(uid):
             <span class="spinner-lbl">Calling Claude API…</span>
           </div>
           <div class="r-card" id="rCard">
-            <div id="rBadge" class="r-badge"></div>
-            <div class="r-field">
-              <div class="r-field-label">Category</div>
-              <div class="r-field-value" id="rCat">—</div>
-            </div>
-            <div class="r-field">
-              <div class="r-field-label">Severity</div>
-              <div class="sev-dots" id="rSev"></div>
-            </div>
-            <div class="r-field">
-              <div class="r-field-label">Line Hint</div>
-              <div class="r-field-value" id="rLine">—</div>
-            </div>
-            <div class="r-field">
-              <div class="r-field-label">Comment</div>
-              <div class="r-field-value" id="rComment">—</div>
-            </div>
-            <div class="r-field">
-              <div class="r-field-label">Suggested Fix</div>
-              <pre class="r-fix" id="rFix"></pre>
-            </div>
+            <div id="bugNav" style="display:none; margin-bottom:16px;"></div>
+            <div id="bugList"></div>
           </div>
         </div>
       </div>
@@ -823,29 +804,61 @@ function mockReview(code) {
     comment:'No obvious bugs detected. Code looks clean.', fix:'' };
 }
 
-function renderResult(d) {
-  const badgeCls = d.category === 'security' ? 'sec'
-                 : d.category === 'logic'    ? 'lgc'
-                 : d.type === 'approve'      ? 'apr' : 'sty';
-  const badge = document.getElementById('rBadge');
-  badge.className = 'r-badge ' + badgeCls;
-  badge.textContent = d.type === 'approve' ? '✓ Approved' : '⚠ ' + (d.category || d.type);
-
-  document.getElementById('rCat').textContent     = d.category || d.type || '—';
-  document.getElementById('rLine').textContent    = d.line_hint ? 'Line ' + d.line_hint : 'Not specified';
-  document.getElementById('rComment').textContent = d.comment || '—';
-  document.getElementById('rFix').textContent     = d.fix || (d.type === 'approve' ? '(no fix required)' : '—');
-
-  const dotsEl = document.getElementById('rSev');
-  dotsEl.innerHTML = '';
-  for (let i = 1; i <= 5; i++) {
-    const dot = document.createElement('div');
-    dot.className = 'sd' + (i <= (d.severity || 0) ? ' on' : '');
-    dotsEl.appendChild(dot);
+function renderResult(data) {
+  // Support both old and new API (single bug or multiple bugs)
+  let bugs = [];
+  if (Array.isArray(data.bugs) && data.bugs.length > 0) {
+    bugs = data.bugs;
+  } else if (data.type || data.category) {
+    bugs = [data];
+  } else if (data.primary_bug) {
+    bugs = [data.primary_bug];
   }
 
+  const bugList = document.getElementById('bugList');
+  const bugNav = document.getElementById('bugNav');
+  bugList.innerHTML = '';
+  bugNav.innerHTML = '';
+
+  if (bugs.length === 0) {
+    bugList.innerHTML = `<div class="r-badge apr">✓ Approved</div><div class="r-field-value">No obvious bugs detected. Code looks clean.</div>`;
+    bugNav.style.display = 'none';
+  } else {
+    // Navigation pills for multiple bugs
+    if (bugs.length > 1) {
+      bugNav.style.display = '';
+      bugNav.innerHTML = bugs.map((b, i) => `<button type="button" class="bug-pill" id="bugPill${i}" style="margin-right:6px;padding:4px 10px;border-radius:2px;border:none;background:#222;color:#fff;font-family:var(--mono);font-size:.7rem;cursor:pointer;opacity:${i===0?1:0.6}" onclick="showBug(${i}, this)">Bug ${i+1}</button>`).join('');
+    } else {
+      bugNav.style.display = 'none';
+    }
+    // Render all bugs, but only first is visible by default
+    bugs.forEach((bug, i) => {
+      const badgeCls = bug.category === 'security' ? 'sec'
+                       : bug.category === 'logic'    ? 'lgc'
+                       : bug.type === 'approve'      ? 'apr' : 'sty';
+      const sevDots = Array.from({length:5}, (_,j) => `<div class="sd${j < (bug.severity||0) ? ' on' : ''}"></div>`).join('');
+      bugList.innerHTML += `
+        <div class="bug-detail" id="bugDetail${i}" style="${i===0?'':'display:none;'};margin-bottom:24px;">
+          <div class="r-badge ${badgeCls}">${bug.type === 'approve' ? '✓ Approved' : '⚠ ' + (bug.category || bug.type)}</div>
+          <div class="r-field"><div class="r-field-label">Category</div><div class="r-field-value">${bug.category || bug.type || '—'}</div></div>
+          <div class="r-field"><div class="r-field-label">Severity</div><div class="sev-dots">${sevDots}</div></div>
+          <div class="r-field"><div class="r-field-label">Line Hint</div><div class="r-field-value">${bug.line_hint ? 'Line ' + bug.line_hint : 'Not specified'}</div></div>
+          <div class="r-field"><div class="r-field-label">Comment</div><div class="r-field-value">${bug.comment || '—'}</div></div>
+          <div class="r-field"><div class="r-field-label">Suggested Fix</div><pre class="r-fix">${bug.fix || (bug.type === 'approve' ? '(no fix required)' : '—')}</pre></div>
+        </div>
+      `;
+    });
+  }
   document.getElementById('rTs').textContent = new Date().toLocaleTimeString();
   document.getElementById('rCard').classList.add('on');
+}
+
+// Navigation for multiple bugs
+function showBug(idx, btn) {
+  const bugs = document.querySelectorAll('.bug-detail');
+  bugs.forEach((el, i) => { el.style.display = (i === idx) ? '' : 'none'; });
+  const pills = document.querySelectorAll('.bug-pill');
+  pills.forEach((el, i) => { el.style.opacity = (i === idx) ? 1 : 0.6; });
 }
 
 function showFlash(msg) {

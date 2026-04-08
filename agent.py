@@ -1,58 +1,6 @@
-"""
-agent.py — LLM-powered code reviewer with structured JSON output.
 
-Key improvements:
-  - API key validated at import time with a clear startup message
-  - Exceptions are logged (never silently swallowed)
-  - System prompt carries persona + schema; user turn carries only the code
-  - Two few-shot examples are included for reliable JSON compliance
-  - One automatic retry when the first response is malformed JSON
-  - Model / token constants come from config.py
-"""
-
-import json
-import logging
-import os
-import re
-import sys
-
-from config import (
-    ANTHROPIC_MODEL,
-    OPENAI_MODEL,
-    MAX_TOKENS,
-)
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Startup: API-key validation
-# ---------------------------------------------------------------------------
-
-def _check_api_keys() -> None:
-    """
-    Called once at module load.  Exits with a clear message if no usable
-    API key is present, rather than letting the server start and then die
-    mid-request with a cryptic SDK error.
-    """
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-    except ImportError:
-        pass
-
-    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
-    has_openai    = bool(os.environ.get("OPENAI_API_KEY",    "").strip())
-
-    if not has_anthropic and not has_openai:
-        print(
+_SYSTEM_PROMPT = """\
+You are an expert security-focused code reviewer.\n\nYour ONLY job is to return a single valid JSON array of bug objects (not markdown, not prose).\n\nJSON array schema (all fields required in each object):\n{\n  "type":      "bug",\n  "category":  "security" | "logic" | "style",\n  "severity":  1-5,\n  "comment":   "<brief description of the issue>",\n  "fix":       "<how to fix it>",\n  "confidence": 0.75-0.99,\n  "line_hint": "<which line has the issue>"\n}\n\nIf the code is clean, return: []\n\n--- FEW-SHOT EXAMPLES ---\n\nExample 1 — SQL injection and hardcoded password:\nCode:\n  def get_user(uid):\n      q = f\"SELECT * FROM users WHERE id={uid}\"\n      cursor.execute(q)\n      password = 'hunter2'\n\nResponse:\n[\n  {\n    "type": "bug",\n    "category": "security",\n    "severity": 5,\n    "comment": "SQL injection: f-string with variable interpolation in SQL query.",\n    "fix": "Use parameterized queries: cursor.execute('SELECT * FROM users WHERE id = ?', (uid,))",\n    "confidence": 0.95,\n    "line_hint": "2"\n  },\n  {\n    "type": "bug",\n    "category": "security",\n    "severity": 5,\n    "comment": "Hardcoded password/credential detected.",\n    "fix": "Use environment variables: os.getenv('DB_PASSWORD')",\n    "confidence": 0.98,\n    "line_hint": "4"\n  }\n]\n\nExample 2 — clean code:\nCode:\n  def add(a: int, b: int) -> int:\n      return a + b\n\nResponse:\n[]\n\nExample 3 — off-by-one and division by zero:\nCode:\n  for i in range(len(items) - 1):\n      process(items[i])\n  x = 1 / 0\n\nResponse:\n[\n  {\n    "type": "bug",\n    "category": "logic",\n    "severity": 3,\n    "comment": "Off-by-one error: range(len(x)-1) skips the last element.",\n    "fix": "Use range(len(arr)) or check bounds: if i+1 < len(arr)",\n    "confidence": 0.85,\n    "line_hint": "1"\n  },\n  {\n    "type": "bug",\n    "category": "logic",\n    "severity": 3,\n    "comment": "Potential division by zero. Check denominator is non-zero.",\n    "fix": "Add check: if denominator != 0: result = numerator / denominator",\n    "confidence": 0.99,\n    "line_hint": "3"\n  }\n]\n\n--- END EXAMPLES ---\n\nALWAYS look for:\nSECURITY (severity 4-5):\n  - SQL built with f-strings / concatenation\n  - Passwords stored/passed without hashing\n  - Hardcoded secrets, API keys, or tokens\nLOGIC (severity 2-4):\n  - range(len(x) - 1) off-by-one\n  - Strict > / < where >= / <= is needed\n  - Division without zero-check\n  - Missing return in all code paths\n\nIMPORTANT: Return ONLY the JSON array, nothing else.\n"""
             "\n"
             "╔══════════════════════════════════════════════════════════╗\n"
             "║  WARNING: No LLM API key found.                          ║\n"
@@ -226,59 +174,78 @@ def _parse_json(raw: str) -> dict | None:
 # Mock reviewer (last-resort fallback)
 # ---------------------------------------------------------------------------
 
-def mock_review(code: str) -> dict:
+
+def mock_review(code: str) -> list:
     """
     Rule-based fallback used only when both LLM providers are unavailable.
-    Checks for well-known patterns; deliberately conservative to avoid
-    false confidence.
+    Returns a list of bug objects (same schema as LLM output).
     """
     code_lower = code.lower()
+    bugs = []
 
+    # SQL injection
+    if 'f"select' in code_lower or "f'select" in code_lower:
+        bugs.append({
+            "type": "bug",
+            "category": "security",
+            "severity": 5,
+            "comment": "SQL injection: f-string with variable interpolation in SQL query.",
+            "fix": "Use parameterized queries: cursor.execute('SELECT * FROM users WHERE id = ?', (uid,))",
+            "confidence": 0.95,
+            "line_hint": "database query line"
+        })
+
+    # Hardcoded password
     if "hashed = password" in code_lower or (
         "password" in code_lower and "hash" not in code_lower and "bcrypt" not in code_lower
     ):
-        return {
-            "type": "flag",
+        bugs.append({
+            "type": "bug",
             "category": "security",
-            "line_hint": "password assignment line",
-            "comment": "Password assigned without hashing — plain-text storage vulnerability.",
             "severity": 5,
-        }
+            "comment": "Hardcoded password/credential detected.",
+            "fix": "Use environment variables: os.getenv('DB_PASSWORD')",
+            "confidence": 0.98,
+            "line_hint": "password assignment line"
+        })
 
-    if 'f"select' in code_lower or "f'select" in code_lower:
-        return {
-            "type": "flag",
-            "category": "security",
-            "line_hint": "database query line",
-            "comment": "Vulnerable SQL query: f-string interpolation allows SQL injection.",
-            "severity": 5,
-        }
-
-    if "range(len(" in code_lower:
-        return {
-            "type": "flag",
+    # Off-by-one
+    if "range(len(" in code_lower and "- 1" in code_lower:
+        bugs.append({
+            "type": "bug",
             "category": "logic",
-            "line_hint": "loop range call",
-            "comment": "range(len(x)) pattern detected — verify for off-by-one errors.",
             "severity": 3,
-        }
+            "comment": "Off-by-one error: range(len(x)-1) skips the last element.",
+            "fix": "Use range(len(arr)) or check bounds: if i+1 < len(arr)",
+            "confidence": 0.85,
+            "line_hint": "loop range call"
+        })
 
-    if ("> amount" in code_lower or "< amount" in code_lower) and ">=" not in code_lower and "<=" not in code_lower:
-        return {
-            "type": "flag",
+    # Division by zero
+    if "/ 0" in code_lower:
+        bugs.append({
+            "type": "bug",
             "category": "logic",
-            "line_hint": "comparison check",
-            "comment": "Strict > / < in balance check; may miss the equality edge case.",
-            "severity": 4,
-        }
+            "severity": 3,
+            "comment": "Potential division by zero. Check denominator is non-zero.",
+            "fix": "Add check: if denominator != 0: result = numerator / denominator",
+            "confidence": 0.99,
+            "line_hint": "division line"
+        })
 
-    return {
-        "type": "approve",
-        "category": "ok",
-        "line_hint": "",
-        "comment": "",
-        "severity": 0,
-    }
+    # Strict comparison
+    if ("> amount" in code_lower or "< amount" in code_lower) and ">=" not in code_lower and "<=" not in code_lower:
+        bugs.append({
+            "type": "bug",
+            "category": "logic",
+            "severity": 4,
+            "comment": "Strict > / < in balance check; may miss the equality edge case.",
+            "fix": "Use >= or <= to include equality edge case.",
+            "confidence": 0.8,
+            "line_hint": "comparison check"
+        })
+
+    return bugs
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +256,7 @@ _REQUIRED_KEYS = {"type", "category", "line_hint", "comment", "severity"}
 _DEFAULTS = {"type": "approve", "category": "ok", "line_hint": "", "comment": "", "severity": 0}
 
 
-def review(code: str) -> dict:
+def review(code: str) -> list:
     """
     Review a code snippet.
 
@@ -297,26 +264,28 @@ def review(code: str) -> dict:
       1. Call LLM with system prompt + user message.
       2. If JSON is malformed, retry once with an explicit correction hint.
       3. If both attempts fail, fall back to the rule-based mock reviewer.
-      4. Fill any missing keys with safe defaults.
+      4. Fill any missing keys in each bug with safe defaults.
+    Returns a list of bug objects (empty if code is clean).
     """
     user_msg = build_user_message(code)
     raw = call_llm(user_msg, system=_SYSTEM_PROMPT)
     result = _parse_json(raw)
 
-    if result is None:
+    if result is None or not isinstance(result, list):
         # One retry: tell the model its output was invalid
-        logger.warning("LLM returned malformed JSON — retrying with correction hint.")
+        logger.warning("LLM returned malformed JSON or not a list — retrying with correction hint.")
         user_msg_retry = build_user_message(code, retry=True)
         raw_retry = call_llm(user_msg_retry, system=_SYSTEM_PROMPT)
         result = _parse_json(raw_retry)
 
-    if result is None:
+    if result is None or not isinstance(result, list):
         logger.warning("Retry also failed — using mock reviewer.")
         result = mock_review(code)
 
-    # Fill missing keys with safe defaults
-    for key, val in _DEFAULTS.items():
-        result.setdefault(key, val)
+    # Fill missing keys in each bug with safe defaults
+    for bug in result:
+        for key, val in _DEFAULTS.items():
+            bug.setdefault(key, val)
 
     return result
 

@@ -1,3 +1,16 @@
+from training_loop import run_training
+
+# Endpoint to trigger RL training
+from fastapi import Query
+
+@app.post("/api/train")
+async def run_real_training(episodes: int = Query(5, description="Number of training episodes to run")):
+    """
+    Run the RL training loop for the specified number of episodes.
+    Returns training stats and summary.
+    """
+    stats = run_training(num_episodes=episodes, verbose=False)
+    return {"status": "ok", "stats": stats}
 from openenv.core.env_server import create_fastapi_app
 from environment import CodeBugEnvironment
 from models import CodeReviewAction, CodeReviewObservation, CodeReviewState
@@ -10,8 +23,9 @@ import re
 import logging
 
 # Import LLM capabilities
+
 try:
-    from agent import call_llm, build_user_message, _SYSTEM_PROMPT
+    from agent import review as agent_review
     HAS_LLM = True
 except ImportError:
     HAS_LLM = False
@@ -110,79 +124,24 @@ async def review_code(request: ReviewRequest):
         )
 
 
+
 def analyze_code_with_llm(code: str, lang: str) -> list:
     """
-    Use LLM (Claude/GPT) to analyze code comprehensively.
-    Returns list of bugs with confidence scores.
-    Falls back to pattern-based if LLM fails.
+    Use LLM-powered agent.review() to analyze code for ALL bugs. Returns a list of bug objects. Falls back to pattern-based if LLM fails.
     """
     try:
-        # Improved prompt that gets LLM to return clean JSON
-        analysis_prompt = f"""You are an expert code security reviewer. Analyze this {lang} code for ALL bugs, vulnerabilities, and issues.
-
-CODE:
-{code}
-
-Return ONLY a valid JSON array (no markdown, no explanation). Each bug object must have these exact fields:
-- type: "bug"
-- category: "security" | "logic" | "style"
-- severity: 1-5 (1=minor, 5=critical)
-- comment: brief description of the issue
-- fix: how to fix it
-- confidence: 0.75-0.99
-- line_hint: which line has the issue
-
-If code is clean, return: []
-
-Examples of bugs to look for:
-- SQL injection (f-strings in queries)
-- Hardcoded secrets/passwords
-- Command injection
-- XSS vulnerabilities
-- Infinite recursion without base case
-- Off-by-one errors in loops
-- Race conditions
-- Mutable default arguments (Python)
-- Resource leaks
-- Exception handling issues
-- Type mismatches
-
-IMPORTANT: Return ONLY the JSON array, nothing else."""
-
-        response = call_llm(analysis_prompt, system=_SYSTEM_PROMPT)
-        
-        if response:
-            # Parse JSON response
-            try:
-                # Extract JSON array from response
-                json_match = re.search(r'\[\s*(?:\{[^}]*\}[,\s]*)*\]', response, re.DOTALL)
-                if json_match:
-                    bugs = json.loads(json_match.group())
-                    
-                    # Ensure all required fields exist
-                    for bug in bugs:
-                        if isinstance(bug, dict):
-                            bug.setdefault("type", "bug")
-                            bug.setdefault("category", "logic")
-                            bug.setdefault("severity", 3)
-                            bug.setdefault("confidence", 0.85)
-                            bug.setdefault("comment", "")
-                            bug.setdefault("fix", "")
-                            bug.setdefault("line_hint", "")
-                            bug.setdefault("languages", [lang])
-                    
-                    # Sort by severity (highest first), then by confidence
-                    bugs.sort(key=lambda x: (x.get('severity', 0), x.get('confidence', 0)), reverse=True)
-                    
-                    logger.info(f"LLM found {len(bugs)} bugs in {lang} code")
-                    return bugs
-            except (json.JSONDecodeError, AttributeError) as e:
-                logger.debug(f"Failed to parse LLM JSON: {e}. Response was: {response[:200]}")
-                # Fall through to pattern-based fallback
-        
-        # Fallback to pattern-based if LLM response is empty or invalid
-        return analyze_code_comprehensively(code, lang)
-        
+        bugs = agent_review(code)
+        # Optionally filter by language if needed
+        if not isinstance(bugs, list):
+            bugs = []
+        # Add language info if missing
+        for bug in bugs:
+            if "languages" not in bug:
+                bug["languages"] = [lang]
+        # Sort by severity (highest first), then by confidence
+        bugs.sort(key=lambda x: (x.get('severity', 0), x.get('confidence', 0)), reverse=True)
+        logger.info(f"LLM found {len(bugs)} bugs in {lang} code")
+        return bugs
     except Exception as e:
         logger.warning(f"LLM analysis failed ({type(e).__name__}: {e}). Using fallback pattern-based analysis.")
         return analyze_code_comprehensively(code, lang)
