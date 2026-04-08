@@ -787,16 +787,22 @@ async function doReview() {
   document.getElementById('rLoading').classList.add('on');
 
   try {
-    const res  = await fetch('/api/review', {
+    const res = await fetch('/api/review', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, language: lang })
     });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || errData.error || `API error: ${res.status}`);
+    }
+
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'API error');
     renderResult(data);
   } catch (err) {
-    console.warn('Backend unavailable, using local analysis:', err.message);
+    console.error('API call failed:', err.message);
+    console.warn('Falling back to local analysis...');
     renderResult(mockReview(code, lang));
   } finally {
     btn.disabled = false;

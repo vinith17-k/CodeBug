@@ -1,8 +1,8 @@
 from openenv.core.env_server import create_fastapi_app
 from environment import CodeBugEnvironment
 from models import CodeReviewAction, CodeReviewObservation, CodeReviewState
-from fastapi.responses import HTMLResponse
-from fastapi import Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import Request, HTTPException
 from pydantic import BaseModel
 import os
 import json
@@ -31,19 +31,27 @@ class ReviewRequest(BaseModel):
 @app.post("/api/review")
 async def review_code(request: ReviewRequest):
     """Analyze code and return bug findings"""
-    code = request.code.strip()
-    lang = request.language.lower()
-    
-    if not code:
-        return {"error": "Code cannot be empty"}, 400
-    if not lang:
-        return {"error": "Language must be specified"}, 400
-    if len(code) > 5000:
-        return {"error": "Code exceeds 5000 characters"}, 400
-    
-    # Local pattern-based analysis (since this is a demo)
-    result = analyze_code_locally(code, lang)
-    return result
+    try:
+        code = request.code.strip()
+        lang = request.language.lower()
+        
+        if not code:
+            raise HTTPException(status_code=400, detail="Code cannot be empty")
+        if not lang:
+            raise HTTPException(status_code=400, detail="Language must be specified")
+        if len(code) > 5000:
+            raise HTTPException(status_code=400, detail="Code exceeds 5000 characters")
+        
+        # Local pattern-based analysis
+        result = analyze_code_locally(code, lang)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
 
 def analyze_code_locally(code: str, lang: str) -> dict:
     """Pattern-based code analysis - production would use LLM"""
