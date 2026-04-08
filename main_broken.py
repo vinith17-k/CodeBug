@@ -1,7 +1,3 @@
-"""
-CodeBug FastAPI server with comprehensive code review and training endpoints.
-"""
-
 from fastapi import FastAPI, Query, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
@@ -16,22 +12,21 @@ try:
     HAS_LLM = True
 except ImportError as e:
     HAS_LLM = False
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Failed to import agent: {e}")
 
 logger = logging.getLogger(__name__)
 
-# Create the OpenEnv app (has /ws, /reset, /step, /state, /health, etc.)
-openenv_app = create_fastapi_app(
+# Create the FastAPI app with OpenEnv integration
+app = create_fastapi_app(
     CodeBugEnvironment,
     CodeReviewAction,
     CodeReviewObservation
 )
 
-# Create a wrapper FastAPI app (takes precedence for /api/* routes)
-app = FastAPI(title="CodeBug API", version="2.0")
-
-# ========================================================================
-# POST /api/train - Run RL training
-# ========================================================================
+# ============================================================================
+# ENDPOINT: POST /api/train
+# ============================================================================
 @app.post("/api/train")
 async def run_real_training(episodes: int = Query(5, description="Number of training episodes to run")):
     """Run the RL training loop for the specified number of episodes."""
@@ -47,9 +42,9 @@ async def run_real_training(episodes: int = Query(5, description="Number of trai
         )
 
 
-# ========================================================================
-# POST /api/review - Analyze code for bugs
-# ========================================================================
+# ============================================================================
+# ENDPOINT: POST /api/review
+# ============================================================================
 class ReviewRequest(BaseModel):
     code: str
     language: str
@@ -121,21 +116,8 @@ async def review_code(request: ReviewRequest):
         import traceback
         error_trace = traceback.format_exc()
         logger.error(f"Review endpoint failed: {e}\n{error_trace}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": f"Analysis failed: {str(e)}",
-                "details": error_trace[:500]
-            }
-        )
-
-
-# ========================================================================
-# Helper functions for code analysis
-# ========================================================================
 
 def analyze_code_with_llm(code: str, lang: str) -> list:
-    """Use LLM-powered agent.review() to analyze code"""
     try:
         bugs = agent_review(code)
         if not isinstance(bugs, list):
@@ -147,14 +129,14 @@ def analyze_code_with_llm(code: str, lang: str) -> list:
         logger.info(f"LLM found {len(bugs)} bugs in {lang} code")
         return bugs
     except Exception as e:
-        logger.warning(f"LLM analysis failed ({type(e).__name__}: {e}). Using fallback analysis.")
+        logger.warning(f"LLM analysis failed ({type(e).__name__}: {e}). Using fallback pattern-based analysis.")
         return analyze_code_comprehensively(code, lang)
-
 
 def analyze_code_comprehensively(code: str, lang: str) -> list:
     """Fallback pattern-based bug detection when LLM is unavailable"""
     bugs = []
     code_lower = code.lower()
+    lines = code.split('\n')
     
     # SQL Injection
     if ('f"' in code or "f'" in code) and any(sql in code_lower for sql in ['select', 'insert', 'delete', 'update', 'from', 'where']) and '{' in code:
@@ -229,9 +211,10 @@ def analyze_code_comprehensively(code: str, lang: str) -> list:
     return bugs
 
 
-# ========================================================================
-# GET / - Serve frontend
-# ========================================================================
+# ============================================================================
+# FRONTEND + HELPER ENDPOINTS
+# ============================================================================
+
 @app.get("/")
 def serve_frontend():
     """Serve the CodeBug frontend UI"""
@@ -240,12 +223,9 @@ def serve_frontend():
         with open(html_path, "r", encoding="utf-8") as f:
             return HTMLResponse(f.read())
     except:
-        return HTMLResponse("<h1>CodeBug API Running.</h1><p>Visit /docs for API documentation.</p>")
+        return HTMLResponse("<h1>CodeBug API is Running.</h1><p>Visit /docs to see available endpoints.</p>")
 
 
-# ========================================================================
-# GET /api/health - Health check
-# ========================================================================
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
@@ -268,9 +248,6 @@ async def health_check():
     }
 
 
-# ========================================================================
-# GET /api/stats - Usage statistics
-# ========================================================================
 @app.get("/api/stats")
 async def get_stats():
     """Return usage statistics"""
@@ -283,8 +260,94 @@ async def get_stats():
         "style_checks": 10
     }
 
+    
+    # Resource leak
+    if re.search(r'open\s*\([^)]+\)\s*(?!with|as)', code) and '.close()' not in code:
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+            "comment": "Resource leak: File opened without 'with' statement. May not close properly.",
+            "fix": "Use: with open(file) as f: ... (automatic close)",
+            "confidence": 0.93,
+            "languages": ["python"]
+        })
+    
+    # Infinite recursion (Python)
+    if lang == 'python' and re.search(r'def\s+(\w+).*:\s*.*return\s+\1\s*\(', code, re.DOTALL):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+            "comment": "Infinite recursion: Function calls itself without base case.",
+            "fix": "Add base case: if condition: return value",
+            "confidence": 0.87,
+            "languages": ["python", "javascript", "java", "go", "cpp"]
+        })
+    
+    # Bare except (Python)
+    if lang == 'python' and re.search(r'except\s*:\s*(?!.*#)', code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+            "comment": "Bare except clause: Catches all exceptions including KeyboardInterrupt.",
+            "fix": "Specify exception: except ValueError: or except Exception:",
+            "confidence": 0.96,
+            "languages": ["python"]
+        })
+    
+    # Type errors
+    if lang == 'python' and re.search(r'["\'][^"\']*["\'].*\+.*[0-9]|["\'][^"\']*["\'].*\+\s*\w+(?![\"\')])', code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+            "comment": "Type error: Cannot concatenate string with number directly.",
+            "fix": "Convert to string: str(value) or use f-string: f'text {value}'",
+            "confidence": 0.82,
+            "languages": ["python"]
+        })
+    
+    # Missing return statement (Python)
+    if lang == 'python' and re.search(r'def\s+\w+\s*\([^)]*\):[^}]*\n\s{4,}result\s*=', code) and not re.search(r'return\s+result', code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 2, "line_hint": 3,
+            "comment": "Missing return statement: Function computes value but returns None.",
+            "fix": "Add return: return result",
+            "confidence": 0.89,
+            "languages": ["python"]
+        })
+    
+    # Race condition (threading/multiprocessing)
+    if re.search(r'threading\.|multiprocessing\.|Thread|Process|concurrent', code, re.I) and not re.search(r'Lock|RLock|Semaphore|Mutex|synchronized', code, re.I):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+            "comment": "Race condition: Multithreaded code without synchronization.",
+            "fix": "Use locks: lock = threading.Lock(); with lock: shared_var += 1",
+            "confidence": 0.80,
+            "languages": ["python", "java", "go", "cpp"]
+        })
+    
+    # Inefficient nested loops
+    if code.count('for ') >= 2 and ('range(10000)' in code or 'range(1000)' in code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+            "comment": "Performance issue: Nested loops with large ranges (O(n²) complexity).",
+            "fix": "Use set/dict for O(1) lookup or optimize algorithm",
+            "confidence": 0.75,
+            "languages": ["python", "javascript", "java", "go", "cpp"]
+        })
+    
+    # Sort bugs by severity (highest first)
+    bugs.sort(key=lambda x: x['severity'], reverse=True)
+    
+    return bugs
 
-# ========================================================================
-# Mount OpenEnv app at /openenv prefix
-# ========================================================================
-app.mount("/openenv", openenv_app)
+
+def analyze_code_locally(code: str, lang: str) -> dict:
+    """Pattern-based code analysis - DEPRECATED: Use analyze_code_comprehensively instead"""
+    bugs = analyze_code_comprehensively(code, lang)
+    if bugs:
+        return bugs[0]
+    return {
+        "type": "approve",
+        "category": "style",
+        "severity": 1,
+        "line_hint": None,
+        "comment": "No obvious bugs detected. Code looks clean.",
+        "fix": "",
+        "confidence": 1.0
+    }

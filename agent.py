@@ -1,6 +1,25 @@
 
-_SYSTEM_PROMPT = """\
-You are an expert security-focused code reviewer.\n\nYour ONLY job is to return a single valid JSON array of bug objects (not markdown, not prose).\n\nJSON array schema (all fields required in each object):\n{\n  "type":      "bug",\n  "category":  "security" | "logic" | "style",\n  "severity":  1-5,\n  "comment":   "<brief description of the issue>",\n  "fix":       "<how to fix it>",\n  "confidence": 0.75-0.99,\n  "line_hint": "<which line has the issue>"\n}\n\nIf the code is clean, return: []\n\n--- FEW-SHOT EXAMPLES ---\n\nExample 1 — SQL injection and hardcoded password:\nCode:\n  def get_user(uid):\n      q = f\"SELECT * FROM users WHERE id={uid}\"\n      cursor.execute(q)\n      password = 'hunter2'\n\nResponse:\n[\n  {\n    "type": "bug",\n    "category": "security",\n    "severity": 5,\n    "comment": "SQL injection: f-string with variable interpolation in SQL query.",\n    "fix": "Use parameterized queries: cursor.execute('SELECT * FROM users WHERE id = ?', (uid,))",\n    "confidence": 0.95,\n    "line_hint": "2"\n  },\n  {\n    "type": "bug",\n    "category": "security",\n    "severity": 5,\n    "comment": "Hardcoded password/credential detected.",\n    "fix": "Use environment variables: os.getenv('DB_PASSWORD')",\n    "confidence": 0.98,\n    "line_hint": "4"\n  }\n]\n\nExample 2 — clean code:\nCode:\n  def add(a: int, b: int) -> int:\n      return a + b\n\nResponse:\n[]\n\nExample 3 — off-by-one and division by zero:\nCode:\n  for i in range(len(items) - 1):\n      process(items[i])\n  x = 1 / 0\n\nResponse:\n[\n  {\n    "type": "bug",\n    "category": "logic",\n    "severity": 3,\n    "comment": "Off-by-one error: range(len(x)-1) skips the last element.",\n    "fix": "Use range(len(arr)) or check bounds: if i+1 < len(arr)",\n    "confidence": 0.85,\n    "line_hint": "1"\n  },\n  {\n    "type": "bug",\n    "category": "logic",\n    "severity": 3,\n    "comment": "Potential division by zero. Check denominator is non-zero.",\n    "fix": "Add check: if denominator != 0: result = numerator / denominator",\n    "confidence": 0.99,\n    "line_hint": "3"\n  }\n]\n\n--- END EXAMPLES ---\n\nALWAYS look for:\nSECURITY (severity 4-5):\n  - SQL built with f-strings / concatenation\n  - Passwords stored/passed without hashing\n  - Hardcoded secrets, API keys, or tokens\nLOGIC (severity 2-4):\n  - range(len(x) - 1) off-by-one\n  - Strict > / < where >= / <= is needed\n  - Division without zero-check\n  - Missing return in all code paths\n\nIMPORTANT: Return ONLY the JSON array, nothing else.\n"""
+import os
+import sys
+import json
+import re
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Configuration
+ANTHROPIC_MODEL = "claude-3-5-haiku-20241022"
+OPENAI_MODEL = "gpt-4o-mini"
+MAX_TOKENS = 1024
+
+# Check for available API keys
+has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+has_openai = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+
+def _check_api_keys():
+    """Warn if no LLM APIs are configured"""
+    if not (has_anthropic or has_openai):
+        print(
             "\n"
             "╔══════════════════════════════════════════════════════════╗\n"
             "║  WARNING: No LLM API key found.                          ║\n"
@@ -24,66 +43,10 @@ You are an expert security-focused code reviewer.\n\nYour ONLY job is to return 
 
 _check_api_keys()
 
-# ---------------------------------------------------------------------------
-# Prompt construction
-# ---------------------------------------------------------------------------
+# =========================================================================
+# System Prompt
+# =========================================================================
 
-_SYSTEM_PROMPT = """\
-You are an expert security-focused code reviewer.
-Your ONLY job is to return a single valid JSON object — no markdown, no prose.
-
-JSON schema (all fields required):
-{
-  "type":      "flag" | "approve",
-  "category":  "security" | "logic" | "style" | "ok",
-  "line_hint": "<brief description of the suspicious line>",
-  "comment":   "<clear explanation of the issue, or empty string>",
-  "severity":  1-5
-}
-
-Rules:
-- "type" = "flag"    when a bug or vulnerability is present
-- "type" = "approve" when the code is clean  (category = "ok", severity = 0)
-- category must match the dominant bug class
-
---- FEW-SHOT EXAMPLES ---
-
-Example 1 — SQL injection (flag):
-Code:
-  query = f"SELECT * FROM users WHERE name='{username}'"
-  result = db.execute(query)
-
-Response:
-{"type":"flag","category":"security","line_hint":"f-string query on line 1","comment":"User input interpolated directly into SQL query — classic SQL injection. Use parameterized queries instead.","severity":5}
-
-Example 2 — clean code (approve):
-Code:
-  def add(a: int, b: int) -> int:
-      return a + b
-
-Response:
-{"type":"approve","category":"ok","line_hint":"","comment":"","severity":0}
-
-Example 3 — off-by-one (flag):
-Code:
-  for i in range(len(items) - 1):
-      process(items[i])
-
-Response:
-{"type":"flag","category":"logic","line_hint":"range(len(items) - 1) in for loop","comment":"Off-by-one: range(len(x)-1) skips the last element. Use range(len(x)) or enumerate(x) instead.","severity":3}
---- END EXAMPLES ---
-
-ALWAYS look for:
-SECURITY (severity 4-5):
-  - SQL built with f-strings / concatenation
-  - Passwords stored/passed without hashing
-  - Hardcoded secrets, API keys, or tokens
-LOGIC (severity 2-4):
-  - range(len(x) - 1) off-by-one
-  - Strict > / < where >= / <= is needed
-  - Division without zero-check
-  - Missing return in all code paths
-"""
 
 _RETRY_SUFFIX = (
     "\n\nYour previous response was not valid JSON. "
