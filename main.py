@@ -7,8 +7,7 @@ import os
 app = create_fastapi_app(
     CodeBugEnvironment,
     CodeReviewAction,
-    CodeReviewObservation,
-    CodeReviewState
+    CodeReviewObservation
 )
 
 @app.get("/")
