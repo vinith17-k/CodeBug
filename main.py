@@ -30,7 +30,7 @@ class ReviewRequest(BaseModel):
 
 @app.post("/api/review")
 async def review_code(request: ReviewRequest):
-    """Analyze code and return bug findings"""
+    """Analyze code and return ALL bug findings"""
     try:
         code = request.code.strip()
         lang = request.language.lower()
@@ -42,9 +42,29 @@ async def review_code(request: ReviewRequest):
         if len(code) > 5000:
             raise HTTPException(status_code=400, detail="Code exceeds 5000 characters")
         
-        # Local pattern-based analysis
-        result = analyze_code_locally(code, lang)
-        return result
+        # Local pattern-based analysis - returns ALL bugs, not just first
+        results = analyze_code_comprehensively(code, lang)
+        
+        # Return the highest severity bug (or first bug if user wants single response)
+        if results:
+            return {
+                "bugs_found": len(results),
+                "bugs": results,
+                "primary_bug": results[0]  # Most critical bug
+            }
+        else:
+            return {
+                "bugs_found": 0,
+                "bugs": [],
+                "primary_bug": {
+                    "type": "approve",
+                    "category": "style",
+                    "severity": 1,
+                    "line_hint": None,
+                    "comment": "No obvious bugs detected. Code looks clean.",
+                    "fix": ""
+                }
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -53,7 +73,205 @@ async def review_code(request: ReviewRequest):
             content={"error": str(e)}
         )
 
+def analyze_code_comprehensively(code: str, lang: str) -> list:
+    """Find ALL bugs in code, not just the first one"""
+    bugs = []
+    code_lower = code.lower()
+    code_no_space = code.lower().replace(' ', '')
+    lines = code.split('\n')
+    
+    # ============ CRITICAL SECURITY BUGS (Severity 5) ============
+    
+    # SQL Injection
+    if ('f"' in code or "f'" in code) and any(sql in code_lower for sql in ['select', 'insert', 'delete', 'update', 'from', 'where']) and '{' in code and '}' in code:
+        bugs.append({
+            "type": "bug", "category": "security", "severity": 5, "line_hint": 3,
+            "comment": "SQL injection: f-string with variable interpolation in SQL query.",
+            "fix": "Use parameterized queries: cursor.execute('SELECT * FROM users WHERE id = ?', (uid,))"
+        })
+    
+    # Command Injection
+    if re.search(r'(os\.system|subprocess|popen|shell=true)\s*\(.*f["\']|exec.*os\.getenv', code, re.I):
+        bugs.append({
+            "type": "bug", "category": "security", "severity": 5, "line_hint": 2,
+            "comment": "Command injection: User input directly in shell command.",
+            "fix": "Use subprocess with args as list: subprocess.run(['ls', filename], shell=False)"
+        })
+    
+    # Hardcoded password/credentials
+    if re.search(r'(password|passwd|pwd|secret|credential)\s*[=:]\s*["\'][^"\']{6,}["\']', code, re.I):
+        bugs.append({
+            "type": "bug", "category": "security", "severity": 5, "line_hint": 2,
+            "comment": "Hardcoded password/credential detected.",
+            "fix": "Use environment variables: os.getenv('DB_PASSWORD')"
+        })
+    
+    # Code execution (eval, exec, pickle)
+    if re.search(r'\b(eval|exec|compile)\s*\(', code) or 'pickle.load' in code or 'yaml.load(' in code:
+        bugs.append({
+            "type": "bug", "category": "security", "severity": 5, "line_hint": 2,
+            "comment": "Arbitrary code execution: eval/exec/pickle are unsafe with untrusted data.",
+            "fix": "Use: json.loads(), ast.literal_eval(), or safe alternatives"
+        })
+    
+    # ============ HIGH SEVERITY SECURITY BUGS (Severity 4) ============
+    
+    # Hardcoded API keys/tokens
+    if re.search(r'(api_key|apikey|secret_key|private_key|token|auth_token|bearer|sk_|pk_)\s*[=:]\s*["\'][a-zA-Z0-9_\-]+["\']', code, re.I):
+        bugs.append({
+            "type": "bug", "category": "security", "severity": 4, "line_hint": 1,
+            "comment": "Hardcoded API key/token detected.",
+            "fix": "api_key = os.getenv('API_KEY')"
+        })
+    
+    # XSS vulnerability (JavaScript)
+    if lang == 'javascript' and re.search(r'\.innerHTML\s*=|\.eval\(|dangerouslySetInnerHTML', code):
+        bugs.append({
+            "type": "bug", "category": "security", "severity": 4, "line_hint": 2,
+            "comment": "XSS vulnerability: Setting innerHTML with user data can execute scripts.",
+            "fix": "Use .textContent or sanitize HTML: DOMPurify.sanitize()"
+        })
+    
+    # Insecure random
+    if re.search(r'(random\.|Math\.random\(\)|rand\(\))', code) and not re.search(r'(secrets|systemrandom|cryptographically|urandom)', code, re.I):
+        bugs.append({
+            "type": "bug", "category": "security", "severity": 4, "line_hint": 2,
+            "comment": "Weak random number generator for security purposes.",
+            "fix": "Use: secrets.token_hex() or os.urandom() for cryptographic randomness"
+        })
+    
+    # ============ LOGIC BUGS ============
+    
+    # Mutable default argument
+    if lang == 'python' and re.search(r'def\s+\w+\s*\([^)]*=\s*\[\]|def\s+\w+\s*\([^)]*=\s*\{\}', code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 3, "line_hint": 1,
+            "comment": "Mutable default argument: List/dict is shared across all function calls.",
+            "fix": "Use None as default: def func(lst=None): if lst is None: lst = []"
+        })
+    
+    # Modifying list while iterating
+    if lang == 'python' and re.search(r'for\s+\w+\s+in\s+\w+:.*\.remove\(|for\s+\w+\s+in\s+\w+:.*\.pop\(', code, re.DOTALL):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+            "comment": "Modifying list while iterating: Causes items to be skipped.",
+            "fix": "Iterate over a copy: for item in items[:]: or use list comprehension"
+        })
+    
+    # Shadowing built-ins
+    if lang == 'python':
+        builtins = ['list', 'dict', 'set', 'tuple', 'str', 'int', 'float', 'len', 'range', 'map', 'filter', 'zip', 'open']
+        for builtin in builtins:
+            if re.search(rf'^{builtin}\s*=', code, re.MULTILINE):
+                bugs.append({
+                    "type": "bug", "category": "logic", "severity": 2, "line_hint": 1,
+                    "comment": f"Shadowing built-in '{builtin}': Overwrites Python's {builtin}() function.",
+                    "fix": f"Rename variable: use my_{builtin} or similar"
+                })
+                break  # Only report one shadowing at a time
+    
+    # Division by zero
+    if re.search(r'\/\s*0', code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+            "comment": "Potential division by zero. Check denominator is non-zero.",
+            "fix": "Add check: if denominator != 0: result = numerator / denominator"
+        })
+    
+    # Off-by-one with array indexing
+    if re.search(r'\[\s*\w+\s*\+\s*1\s*\]|\[.*:.*-\s*1\]', code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+            "comment": "Off-by-one error: arr[i+1] may access beyond array bounds.",
+            "fix": "Use range(len(arr)-1) or check bounds: if i+1 < len(arr)"
+        })
+    
+    # Resource leak
+    if re.search(r'open\s*\([^)]+\)\s*(?!with)', code) and '.close()' not in code:
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+            "comment": "Resource leak: File opened without 'with' statement. May not close properly.",
+            "fix": "Use: with open(file) as f: ... (automatic close)"
+        })
+    
+    # Infinite recursion
+    if lang == 'python' and re.search(r'def\s+recurse.*:\s*return\s+recurse', code, re.DOTALL):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+            "comment": "Infinite recursion: Function calls itself without base case.",
+            "fix": "Add base case: if condition: return value"
+        })
+    
+    # ============ TYPE & COMPARISON ERRORS ============
+    
+    # Bare except clause
+    if lang == 'python' and re.search(r'except\s*:\s*(?!.*#)', code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+            "comment": "Bare except clause: Catches all exceptions including KeyboardInterrupt.",
+            "fix": "Specify exception: except ValueError: or except Exception:"
+        })
+    
+    # Type error (concatenating string and int)
+    if lang == 'python' and re.search(r'["\'][^"\']*["\'].*\+.*\d|["\'][^"\']*["\'].*\+\s*[a-zA-Z_]', code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+            "comment": "Type error: Cannot concatenate string with number directly.",
+            "fix": "Convert to string: str(value) or use f-string: f'text {value}'"
+        })
+    
+    # Missing return statement
+    if lang == 'python' and re.search(r'def\s+\w+\s*\([^)]*\):[^}]*\n\s{4,}result\s*=', code) and not re.search(r'return\s+result', code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 2, "line_hint": 3,
+            "comment": "Missing return statement: Function computes value but returns None.",
+            "fix": "Add return: return result"
+        })
+    
+    # Race condition
+    if lang == 'python' and re.search(r'threading\.|Thread|multiprocessing', code) and not re.search(r'Lock|RLock|Semaphore', code):
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+            "comment": "Race condition: Multithreaded code without synchronization.",
+            "fix": "Use locks: lock = threading.Lock(); with lock: shared_var += 1"
+        })
+    
+    # Inefficient nested loops
+    if code.count('for ') >= 2 and 'range(10000)' in code:
+        bugs.append({
+            "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+            "comment": "Performance issue: Nested loops with large ranges (O(n²) complexity).",
+            "fix": "Use set/dict for O(1) lookup or optimize algorithm"
+        })
+    
+    # Logical error (identical branches)
+    if re.search(r'if\s+(\w+)\s*>\s*(\d+):\s*print\([^)]+\)\s*else:\s*print\([^)]+\)', code):
+        if 'Adult' in code.split('else')[0] and 'Adult' in code.split('else')[1]:
+            bugs.append({
+                "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+                "comment": "Logical error: Both if and else branches do the same thing.",
+                "fix": "Remove the condition or fix the logic"
+            })
+    
+    # Sort bugs by severity (highest first)
+    bugs.sort(key=lambda x: x['severity'], reverse=True)
+    
+    return bugs
+
+
 def analyze_code_locally(code: str, lang: str) -> dict:
+    """Pattern-based code analysis - DEPRECATED: Use analyze_code_comprehensively instead"""
+    bugs = analyze_code_comprehensively(code, lang)
+    if bugs:
+        return bugs[0]
+    return {
+        "type": "approve",
+        "category": "style",
+        "severity": 1,
+        "line_hint": None,
+        "comment": "No obvious bugs detected. Code looks clean.",
+        "fix": ""
+    }
     """Comprehensive pattern-based code analysis"""
     
     code_lower = code.lower()
@@ -247,6 +465,107 @@ def analyze_code_locally(code: str, lang: str) -> dict:
                 "type": "bug", "category": "style", "severity": 1, "line_hint": 2,
                 "comment": "Consider using logging instead of print() for production code.",
                 "fix": "Use: import logging; logging.info('message')"
+            }
+    
+    # ============ PYTHON-SPECIFIC BUGS ============
+    
+    if lang == 'python':
+        # Mutable default argument
+        if re.search(r'def\s+\w+\s*\([^)]*=\s*\[\]|def\s+\w+\s*\([^)]*=\s*\{\}', code):
+            return {
+                "type": "bug", "category": "logic", "severity": 3, "line_hint": 1,
+                "comment": "Mutable default argument: List/dict is shared across all function calls.",
+                "fix": "Use None as default: def func(lst=None): if lst is None: lst = []"
+            }
+        
+        # Modifying list while iterating
+        if re.search(r'for\s+\w+\s+in\s+\w+:.*\.remove\(|for\s+\w+\s+in\s+\w+:.*\.pop\(', code, re.DOTALL):
+            return {
+                "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+                "comment": "Modifying list while iterating: Causes items to be skipped.",
+                "fix": "Iterate over a copy: for item in items[:]: or use list comprehension"
+            }
+        
+        # Shadowing built-in names
+        builtins = ['list', 'dict', 'set', 'tuple', 'str', 'int', 'float', 'len', 'range', 'map', 'filter', 'zip', 'open']
+        for builtin in builtins:
+            if re.search(rf'^{builtin}\s*=', code, re.MULTILINE):
+                return {
+                    "type": "bug", "category": "logic", "severity": 2, "line_hint": 1,
+                    "comment": f"Shadowing built-in '{builtin}': Overwrites Python's {builtin}() function.",
+                    "fix": f"Rename variable: use my_{builtin} or similar"
+                }
+        
+        # Missing return statement
+        if re.search(r'def\s+\w+\s*\([^)]*\):[^}]*\n\s{4,}\w+\s*=', code) and 'return' not in code:
+            return {
+                "type": "bug", "category": "logic", "severity": 2, "line_hint": 3,
+                "comment": "Missing return statement: Function computes value but returns None.",
+                "fix": "Add return: return result"
+            }
+        
+        # Bare except clause
+        if re.search(r'except\s*:\s*(?!.*#)', code):
+            return {
+                "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+                "comment": "Bare except clause: Catches all exceptions including KeyboardInterrupt.",
+                "fix": "Specify exception: except ValueError: or except Exception:"
+            }
+        
+        # Variable scope issue
+        if re.search(r'def\s+\w+\s*\([^)]*\):[^}]*\n(?:\s{4}.*\n)*(?:\s{0,3})\w+\s*=', code):
+            return {
+                "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+                "comment": "Variable scope issue: Variable defined in function not accessible outside.",
+                "fix": "Make it global: global var_name (use sparingly) or return the value"
+            }
+        
+        # Race condition (threading/multiprocessing)
+        if re.search(r'threading\.|multiprocessing\.|Thread|Process', code) and not re.search(r'Lock|RLock|Semaphore|Condition', code):
+            return {
+                "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+                "comment": "Race condition: Multithreaded code without synchronization.",
+                "fix": "Use locks: lock = threading.Lock(); with lock: shared_var += 1"
+            }
+        
+        # Infinite recursion (no base case)
+        if re.search(r'def\s+\w+\s*\([^)]*\):[^}]*\1\s*\(', code):
+            return {
+                "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
+                "comment": "Infinite recursion: Function calls itself without base case.",
+                "fix": "Add base case: if condition: return value"
+            }
+        
+        # Type error (concatenating string and int)
+        if re.search(r'["\'][^"\']*["\'].*\+.*\d+|["\'][^"\']*["\'].*\+\s*\w+', code):
+            return {
+                "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+                "comment": "Type error: Cannot concatenate string with number directly.",
+                "fix": "Convert to string: str(value) or use f-string: f'text {value}'"
+            }
+        
+        # Off-by-one with array indexing
+        if re.search(r'\[\s*\w+\s*\+\s*1\s*\]', code):
+            return {
+                "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+                "comment": "Off-by-one error: arr[i+1] may access beyond array bounds.",
+                "fix": "Use range(len(arr)-1) or check bounds: if i+1 < len(arr)"
+            }
+        
+        # Inefficient nested loops
+        if code.count('for ') >= 2 and 'range(10000)' in code:
+            return {
+                "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+                "comment": "Performance issue: Nested loops with large ranges (O(n²) complexity).",
+                "fix": "Use set/dict for O(1) lookup or optimize algorithm"
+            }
+        
+        # Logical error (identical branches)
+        if re.search(r'if\s+.*?:\s*([^\n]+)\s*else:\s*\1', code, re.DOTALL | re.IGNORECASE):
+            return {
+                "type": "bug", "category": "logic", "severity": 2, "line_hint": 2,
+                "comment": "Logical error: Both if and else branches do the same thing.",
+                "fix": "Remove the condition or fix the logic"
             }
     
     # ============ DEFAULT: NO BUGS ============

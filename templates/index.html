@@ -938,8 +938,24 @@ function mockReview(code, lang) {
 }
 
 function renderResult(d) {
-  // If the backend wraps the result in ai_action, extract it.
-  const action = d.ai_action || d;
+  // Handle both old (single bug) and new (multiple bugs) formats
+  let action;
+  let bugsCount = 0;
+  
+  if (d.primary_bug) {
+    // New format: multiple bugs detected
+    action = d.primary_bug;
+    bugsCount = d.bugs_found || 0;
+  } else if (d.bugs && d.bugs.length > 0) {
+    // Alternative: use first bug from list
+    action = d.bugs[0];
+    bugsCount = d.bugs.length;
+  } else {
+    // Old format: single bug response or ai_action
+    action = d.ai_action || d;
+    bugsCount = action.type === 'approve' ? 0 : 1;
+  }
+  
   const fixString = (d.fix && d.fix.fixed_code) ? d.fix.fixed_code : action.fix;
   
   const badgeCls = action.category === 'security' ? 'sec'
@@ -947,7 +963,14 @@ function renderResult(d) {
                  : action.type === 'approve'      ? 'apr' : 'sty';
   const badge = document.getElementById('rBadge');
   badge.className = 'r-badge ' + badgeCls;
-  badge.textContent = action.type === 'approve' ? '✓ Approved' : '⚠ ' + (action.category || action.type);
+  
+  if (action.type === 'approve') {
+    badge.textContent = '✓ Approved';
+  } else if (bugsCount > 1) {
+    badge.textContent = '⚠ ' + bugsCount + ' bugs found';
+  } else {
+    badge.textContent = '⚠ ' + (action.category || action.type);
+  }
 
   document.getElementById('rCat').textContent     = action.category || action.type || '—';
   document.getElementById('rLine').textContent    = action.line_hint ? 'Line ' + action.line_hint : 'Not specified';
