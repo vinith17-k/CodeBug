@@ -515,7 +515,8 @@ def get_user(uid):
     cursor.execute(q)
     return cursor.fetchone()"></textarea>
         <div class="panel-footer">
-          <select class="lang-sel" id="langSel">
+          <select class="lang-sel" id="langSel" required>
+            <option value="">— Select Language —</option>
             <option value="python">Python</option>
             <option value="javascript">JavaScript</option>
             <option value="java">Java</option>
@@ -776,6 +777,7 @@ async function doReview() {
   const btn  = document.getElementById('runBtn');
 
   if (!code) { showFlash('Paste some code first.'); return; }
+  if (!lang) { showFlash('Please select a language.'); return; }
   if (code.length > 5000) { showFlash('Code exceeds 5 000 characters.'); return; }
 
   btn.disabled = true;
@@ -793,8 +795,9 @@ async function doReview() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'API error');
     renderResult(data);
-  } catch {
-    renderResult(mockReview(code));
+  } catch (err) {
+    console.warn('Backend unavailable, using local analysis:', err.message);
+    renderResult(mockReview(code, lang));
   } finally {
     btn.disabled = false;
     document.getElementById('runLbl').textContent = 'Analyze ↗';
@@ -802,25 +805,130 @@ async function doReview() {
   }
 }
 
-function mockReview(code) {
-  if (/f["'].*?(select|insert|delete|update)/i.test(code))
-    return { type:'bug', category:'security', severity:5, line_hint:3,
-      comment:'SQL injection via f-string interpolation. User input flows directly into the query string.',
-      fix:'cursor.execute("SELECT * FROM users WHERE id = ?", (uid,))' };
-  if (/password\s*=\s*["']/.test(code))
-    return { type:'bug', category:'security', severity:5, line_hint:2,
-      comment:'Plain-text password storage detected. Use bcrypt or a similar hashing library.',
-      fix:'pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())' };
-  if (/api_key\s*=\s*["']|secret\s*=\s*["']|token\s*=\s*["']/.test(code))
-    return { type:'bug', category:'security', severity:4, line_hint:1,
-      comment:'Hardcoded secret detected. Move sensitive values to environment variables.',
-      fix:'api_key = os.getenv("API_KEY")' };
-  if (/range\s*\(\s*len\s*\(.*?\)\s*-\s*1\s*\)/.test(code))
-    return { type:'bug', category:'logic', severity:3, line_hint:2,
-      comment:'Off-by-one: range(len(x) - 1) skips the last element.',
-      fix:'for i in range(len(items)):' };
-  return { type:'approve', category:'style', severity:1, line_hint:null,
-    comment:'No obvious bugs detected. Code looks clean.', fix:'' };
+function mockReview(code, lang) {
+  // Comprehensive pattern-based bug detection
+  
+  // === SECURITY BUGS (Highest Priority) ===
+  if (/f["'`].*?\$\{.*?\}|f["'`].*?{.*?}/.test(code) && /(select|insert|delete|update|from|where)/i.test(code)) {
+    return { 
+      type: 'bug', 
+      category: 'security', 
+      severity: 5, 
+      line_hint: 3,
+      comment: 'SQL injection: User input in f-string flows directly to database query.',
+      fix: 'Use parameterized queries: cursor.execute("SELECT * FROM users WHERE id = ?", (uid,))'
+    };
+  }
+  if (/(password|passwd|pwd)\s*[:=]\s*["'].*["']|".*password.*":\s*".*"/i.test(code)) {
+    return { 
+      type: 'bug', 
+      category: 'security', 
+      severity: 5, 
+      line_hint: 2,
+      comment: 'Hardcoded password detected. Never store credentials in source code.',
+      fix: 'Use environment variables: password = os.getenv("DB_PASSWORD")'
+    };
+  }
+  if (/(api_key|apikey|secret|token|private|private_key|secret_key)\s*[:=]\s*["'][a-zA-Z0-9]{8,}["']/i.test(code)) {
+    return { 
+      type: 'bug', 
+      category: 'security', 
+      severity: 4, 
+      line_hint: 1,
+      comment: 'Hardcoded API key/secret detected. Move to environment variables.',
+      fix: 'api_key = os.getenv("API_KEY")\nif not api_key:\n    raise ValueError("API_KEY not set")'
+    };
+  }
+  if (/eval\s*\(|exec\s*\(|pickle\.load|yaml\.load\s*\(|\$\{\s*.*?\s*\}/.test(code)) {
+    return { 
+      type: 'bug', 
+      category: 'security', 
+      severity: 5, 
+      line_hint: 2,
+      comment: 'Arbitrary code execution vulnerability. eval() and exec() are dangerous.',
+      fix: 'Use safe alternatives: json.loads(), ast.literal_eval(), or parameterized logic.'
+    };
+  }
+  
+  // === LOGIC BUGS ===
+  if (/(while\s+true|for\s+\(\s*;\s*;\s*\)|while\s*\(.*\))/.test(code) && !/(break|return|exit)/.test(code)) {
+    return { 
+      type: 'bug', 
+      category: 'logic', 
+      severity: 3, 
+      line_hint: 2,
+      comment: 'Infinite loop detected. Loop never breaks or returns.',
+      fix: 'Add break condition: while condition: {...; break}'
+    };
+  }
+  if (/range\s*\(\s*len\s*\(\s*.*?\s*\)\s*-\s*1\s*\)/.test(code)) {
+    return { 
+      type: 'bug', 
+      category: 'logic', 
+      severity: 3, 
+      line_hint: 2,
+      comment: 'Off-by-one error: range(len(x) - 1) skips the last element.',
+      fix: 'Use: for i in range(len(items)): or simply: for item in items:'
+    };
+  }
+  if (/if\s+(len\s*\(\s*\w+\s*\)\s*[>!=<]=?\s*0|len\s*\(\s*\w+\s*\)\s*!=\s*0)/.test(code)) {
+    return { 
+      type: 'bug', 
+      category: 'logic', 
+      severity: 2, 
+      line_hint: 1,
+      comment: 'Redundant length check. Empty sequences are falsy in Python.',
+      fix: 'Use: if items: instead of if len(items) != 0:'
+    };
+  }
+  if (/===|!==/.test(code) && lang === 'javascript') {
+    // This is actually GOOD in JS, so check for == instead
+    if (/[^=!=]\s*==\s*[^=]|[^=]\s*!=\s*[^=]/.test(code)) {
+      return { 
+        type: 'bug', 
+        category: 'logic', 
+        severity: 2, 
+        line_hint: 3,
+        comment: 'Use strict equality (===) instead of ==. Subject to type coercion bugs.',
+        fix: 'Replace == with === and != with !=='
+      };
+    }
+  }
+  
+  // === STYLE/BEST PRACTICES ===
+  if (/var\s+\w+\s*=/.test(code) && lang === 'javascript') {
+    return { 
+      type: 'bug', 
+      category: 'style', 
+      severity: 2, 
+      line_hint: 1,
+      comment: 'Use const/let instead of var. var has scope issues.',
+      fix: 'Replace var with const (or let if reassignment needed)'
+    };
+  }
+  if (/print\s*\(/.test(code) && lang === 'python') {
+    // Check for simple print, could suggest logging
+    if (!/import logging|logger\./. test(code)) {
+      return { 
+        type: 'approve', 
+        category: 'style', 
+        severity: 1, 
+        line_hint: null,
+        comment: 'Consider using logging module for production code instead of print().',
+        fix: 'import logging\nlogging.info("message")'
+      };
+    }
+  }
+  
+  // === DEFAULT: NO BUGS ===
+  return { 
+    type: 'approve', 
+    category: 'style', 
+    severity: 1, 
+    line_hint: null,
+    comment: 'No obvious bugs detected. Code looks clean.', 
+    fix: '' 
+  };
 }
 
 function renderResult(d) {
