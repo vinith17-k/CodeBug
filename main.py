@@ -248,7 +248,7 @@ def analyze_code_comprehensively(code: str, lang: str) -> list:
         })
     
     # Infinite recursion (Python)
-    if lang == 'python' and re.search(r'def\s+\w+.*:\s*.*return\s+\1\s*\(', code, re.DOTALL):
+    if lang == 'python' and re.search(r'def\s+(\w+).*:\s*.*return\s+\1\s*\(', code, re.DOTALL):
         bugs.append({
             "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
             "comment": "Infinite recursion: Function calls itself without base case.",
@@ -490,7 +490,7 @@ async def get_stats():
         })
     
     # Infinite recursion (Python)
-    if lang == 'python' and re.search(r'def\s+\w+.*:\s*.*return\s+\1\s*\(', code, re.DOTALL):
+    if lang == 'python' and re.search(r'def\s+(\w+).*:\s*.*return\s+\1\s*\(', code, re.DOTALL):
         bugs.append({
             "type": "bug", "category": "logic", "severity": 3, "line_hint": 2,
             "comment": "Infinite recursion: Function calls itself without base case.",
