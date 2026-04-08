@@ -1,6 +1,9 @@
 name: "CodeBug Review Environment"
 version: "1.0.0"
-description: "AI Agent performs Code Review (finding logic, security bugs) across 3 distinct tasks of sequential difficulties (easy, medium, hard)."
+description: "RL environment where an AI agent reviews code snippets to identify bugs. Three tasks: easy (logic/boundary), medium (off-by-one), hard (SQL injection). Reward 0-1 per step."
 entry_point: "main:app"
-author: "CodeBug Team"
-tags: ["rl", "code-review", "agent", "security"]
+author: "vinith17"
+tags: ["rl", "code-review", "security", "agent", "pytorch-hackathon"]
+environment_class: "environment.CodeBugEnvironment"
+action_class: "models.CodeReviewAction"
+observation_class: "models.CodeReviewObservation"
