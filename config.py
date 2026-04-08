@@ -44,10 +44,15 @@ PENALTY_UNKNOWN_ACTION  =  -5    # Unknown action type
 # ---------------------------------------------------------------------------
 # File paths
 # ---------------------------------------------------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-EPISODES_FILE    = "episodes.json"
-ANSWERS_FILE     = "answers.json"
-RUNS_DIR         = "runs"          # All run outputs go here
+EPISODES_FILE    = os.path.join(BASE_DIR, "episodes.json")
+ANSWERS_FILE     = os.path.join(BASE_DIR, "answers.json")
+
+if os.environ.get("VERCEL"):
+    RUNS_DIR = "/tmp/runs"
+else:
+    RUNS_DIR = os.path.join(BASE_DIR, "runs")
 CHECKPOINT_FILE  = os.path.join(RUNS_DIR, "checkpoint.json")
 
 # ---------------------------------------------------------------------------
