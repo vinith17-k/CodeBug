@@ -1,16 +1,33 @@
-from training_loop import run_training
-
-# Endpoint to trigger RL training
+import os
+import json
+import re
+import logging
 from fastapi import Query
+from training_loop import run_training
+app = None
+def create_app():
+    global app
+    if app is not None:
+        return app
+    app_ = create_fastapi_app(
+        CodeBugEnvironment,
+        CodeReviewAction,
+        CodeReviewObservation
+    )
 
-@app.post("/api/train")
-async def run_real_training(episodes: int = Query(5, description="Number of training episodes to run")):
-    """
-    Run the RL training loop for the specified number of episodes.
-    Returns training stats and summary.
-    """
-    stats = run_training(num_episodes=episodes, verbose=False)
-    return {"status": "ok", "stats": stats}
+    @app_.post("/api/train")
+    async def run_real_training(episodes: int = Query(5, description="Number of training episodes to run")):
+        """
+        Run the RL training loop for the specified number of episodes.
+        Returns training stats and summary.
+        """
+        stats = run_training(num_episodes=episodes, verbose=False)
+        return {"status": "ok", "stats": stats}
+
+    # ...existing endpoints (review, health, stats, etc.) will be added below...
+    return app_
+
+app = create_app()
 from openenv.core.env_server import create_fastapi_app
 from environment import CodeBugEnvironment
 from models import CodeReviewAction, CodeReviewObservation, CodeReviewState
@@ -32,11 +49,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-app = create_fastapi_app(
-    CodeBugEnvironment,
-    CodeReviewAction,
-    CodeReviewObservation
-)
+
 
 @app.get("/")
 def serve_frontend():
