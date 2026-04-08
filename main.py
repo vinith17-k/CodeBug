@@ -1,9 +1,15 @@
 from openenv.core.env_server import create_fastapi_app
 from environment import CodeBugEnvironment
+from models import CodeReviewAction, CodeReviewObservation, CodeReviewState
 from fastapi.responses import HTMLResponse
 import os
 
-app = create_fastapi_app(CodeBugEnvironment)
+app = create_fastapi_app(
+    CodeBugEnvironment,
+    CodeReviewAction,
+    CodeReviewObservation,
+    CodeReviewState
+)
 
 @app.get("/")
 def serve_frontend():
