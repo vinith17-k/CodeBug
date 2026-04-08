@@ -13,9 +13,14 @@ from training_loop import run_training
 
 try:
     from agent import review as agent_review
-    HAS_LLM = True
-except ImportError as e:
-    HAS_LLM = False
+    _AGENT_IMPORTED = True
+except ImportError:
+    _AGENT_IMPORTED = False
+
+# Only attempt LLM if at least one API key is actually configured
+_HAS_ANTHROPIC = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+_HAS_OPENAI    = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+HAS_LLM = _AGENT_IMPORTED and (_HAS_ANTHROPIC or _HAS_OPENAI)
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +139,11 @@ async def review_code(request: ReviewRequest):
 # ========================================================================
 
 def analyze_code_with_llm(code: str, lang: str) -> list:
-    """Use LLM-powered agent.review() to analyze code"""
+    """Use LLM-powered agent.review() to analyze code.
+    Short-circuits to pattern analysis if no API keys are configured."""
+    if not HAS_LLM:
+        logger.info("No LLM API keys configured — using pattern analysis.")
+        return analyze_code_comprehensively(code, lang)
     try:
         bugs = agent_review(code)
         if not isinstance(bugs, list):
