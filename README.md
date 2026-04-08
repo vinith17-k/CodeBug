@@ -1,3 +1,13 @@
+---
+title: CodeBug
+emoji: 🐛
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # CodeBug - OpenEnv Hackathon Submission
 
 CodeBug is an RL environment designed to train agents to analyze and review Python code. The goal is to detect underlying issues within code snippets, determining category, severity, and the specific line where the bug resides.
