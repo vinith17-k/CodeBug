@@ -260,6 +260,37 @@ textarea#codeInput {
 .r-card { display: none; }
 .r-card.on { display: block; }
 
+.bug-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #262622;
+}
+.bug-counter {
+  font-family: var(--mono); font-size: .65rem; letter-spacing: .08em;
+  text-transform: uppercase; color: #666;
+}
+.bug-nav {
+  display: flex; gap: 8px; align-items: center;
+}
+.bug-nav-btn {
+  background: #161614; border: 1px solid #262622; border-radius: 2px;
+  color: #999; font-family: var(--mono); font-size: .65rem;
+  padding: 6px 12px; cursor: pointer; transition: all .2s;
+}
+.bug-nav-btn:hover:not(:disabled) { background: #262622; border-color: #3a3a38; color: #ccc; }
+.bug-nav-btn:disabled { opacity: .4; cursor: not-allowed; }
+.bug-summary-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px; margin-bottom: 20px; padding: 12px;
+  background: #0a0a08; border: 1px solid #262622; border-radius: 4px;
+}
+.bug-mini-card {
+  padding: 10px; border-radius: 2px; cursor: pointer; transition: all .2s;
+  border: 1px solid #262622; font-size: .65rem;
+  font-family: var(--mono); text-align: center;
+}
+.bug-mini-card:hover { border-color: #3a3a38; background: #161614; }
+.bug-mini-card.current { border-color: #7eb8d4; background: #1a2a3a; }
+
 .r-badge {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 12px; border-radius: 2px; margin-bottom: 20px;
@@ -545,7 +576,15 @@ def get_user(uid):
             <span class="spinner-lbl">Calling Claude API…</span>
           </div>
           <div class="r-card" id="rCard">
-            <div id="rBadge" class="r-badge"></div>
+            <div class="bug-header">
+              <div id="rBadge" class="r-badge"></div>
+              <div class="bug-nav">
+                <button class="bug-nav-btn" id="prevBtn" onclick="prevBug()">← Prev</button>
+                <span class="bug-counter" id="bugCounter"></span>
+                <button class="bug-nav-btn" id="nextBtn" onclick="nextBug()">Next →</button>
+              </div>
+            </div>
+            <div id="bugSummary" class="bug-summary-grid" style="display: none;"></div>
             <div class="r-field">
               <div class="r-field-label">Category</div>
               <div class="r-field-value" id="rCat">—</div>
@@ -771,6 +810,64 @@ const revealObs = new IntersectionObserver(entries => {
 document.querySelectorAll('.reveal').forEach(el => revealObs.observe(el));
 
 /* ── REVIEW ─────────────────────────────────────────────── */
+let allBugs = [];
+let currentBugIndex = 0;
+
+function prevBug() {
+  if (currentBugIndex > 0) {
+    currentBugIndex--;
+    displayBug(allBugs[currentBugIndex]);
+    updateBugNav();
+  }
+}
+
+function nextBug() {
+  if (currentBugIndex < allBugs.length - 1) {
+    currentBugIndex++;
+    displayBug(allBugs[currentBugIndex]);
+    updateBugNav();
+  }
+}
+
+function updateBugNav() {
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const counter = document.getElementById('bugCounter');
+  
+  prevBtn.disabled = currentBugIndex === 0;
+  nextBtn.disabled = currentBugIndex >= allBugs.length - 1;
+  counter.textContent = `Bug ${currentBugIndex + 1} / ${allBugs.length}`;
+}
+
+function displayBug(bug) {
+  const badgeCls = bug.category === 'security' ? 'sec'
+                 : bug.category === 'logic'    ? 'lgc'
+                 : bug.type === 'approve'      ? 'apr' : 'sty';
+  const badge = document.getElementById('rBadge');
+  badge.className = 'r-badge ' + badgeCls;
+  
+  if (bug.type === 'approve') {
+    badge.textContent = '✓ Approved';
+  } else {
+    badge.textContent = '⚠ ' + (bug.category || bug.type);
+  }
+
+  document.getElementById('rCat').textContent     = bug.category || bug.type || '—';
+  document.getElementById('rLine').textContent    = bug.line_hint ? 'Line ' + bug.line_hint : 'Not specified';
+  document.getElementById('rComment').textContent = bug.comment || '—';
+  
+  const fixString = (bug.fix && bug.fix.fixed_code) ? bug.fix.fixed_code : bug.fix;
+  document.getElementById('rFix').textContent     = fixString || (bug.type === 'approve' ? '(no fix required)' : '—');
+
+  const dotsEl = document.getElementById('rSev');
+  dotsEl.innerHTML = '';
+  for (let i = 1; i <= 5; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'sd' + (i <= (bug.severity || 0) ? ' on' : '');
+    dotsEl.appendChild(dot);
+  }
+}
+
 async function doReview() {
   const code = document.getElementById('codeInput').value.trim();
   const lang = document.getElementById('langSel').value;
@@ -939,52 +1036,52 @@ function mockReview(code, lang) {
 
 function renderResult(d) {
   // Handle both old (single bug) and new (multiple bugs) formats
-  let action;
-  let bugsCount = 0;
+  allBugs = [];
+  currentBugIndex = 0;
   
-  if (d.primary_bug) {
+  if (d.bugs && d.bugs.length > 0) {
     // New format: multiple bugs detected
-    action = d.primary_bug;
-    bugsCount = d.bugs_found || 0;
-  } else if (d.bugs && d.bugs.length > 0) {
-    // Alternative: use first bug from list
-    action = d.bugs[0];
-    bugsCount = d.bugs.length;
+    allBugs = d.bugs;
+  } else if (d.primary_bug) {
+    // Fallback: single primary bug
+    allBugs = [d.primary_bug];
+  } else if (d.ai_action) {
+    // Old format: single bug response
+    allBugs = [d.ai_action];
   } else {
-    // Old format: single bug response or ai_action
-    action = d.ai_action || d;
-    bugsCount = action.type === 'approve' ? 0 : 1;
+    // Direct bug object (from mockReview)
+    allBugs = [d];
   }
   
-  const fixString = (d.fix && d.fix.fixed_code) ? d.fix.fixed_code : action.fix;
+  // Hide summary grid and update main display
+  const summaryGrid = document.getElementById('bugSummary');
+  summaryGrid.style.display = allBugs.length > 1 ? 'grid' : 'none';
   
-  const badgeCls = action.category === 'security' ? 'sec'
-                 : action.category === 'logic'    ? 'lgc'
-                 : action.type === 'approve'      ? 'apr' : 'sty';
-  const badge = document.getElementById('rBadge');
-  badge.className = 'r-badge ' + badgeCls;
+  if (allBugs.length > 1) {
+    // Build summary grid for quick navigation
+    summaryGrid.innerHTML = '';
+    allBugs.forEach((bug, idx) => {
+      const miniCard = document.createElement('div');
+      miniCard.className = 'bug-mini-card' + (idx === 0 ? ' current' : '');
+      const sevText = bug.severity ? '●'.repeat(bug.severity) : '—';
+      miniCard.innerHTML = `<div>${bug.category || 'other'}</div><div style="opacity:.6;margin-top:2px;">${sevText}</div>`;
+      miniCard.onclick = () => {
+        currentBugIndex = idx;
+        displayBug(allBugs[idx]);
+        updateBugNav();
+        // Update all mini cards
+        document.querySelectorAll('.bug-mini-card').forEach((c, i) => {
+          c.classList.toggle('current', i === idx);
+        });
+      };
+      summaryGrid.appendChild(miniCard);
+    });
+  }
   
-  if (action.type === 'approve') {
-    badge.textContent = '✓ Approved';
-  } else if (bugsCount > 1) {
-    badge.textContent = '⚠ ' + bugsCount + ' bugs found';
-  } else {
-    badge.textContent = '⚠ ' + (action.category || action.type);
-  }
-
-  document.getElementById('rCat').textContent     = action.category || action.type || '—';
-  document.getElementById('rLine').textContent    = action.line_hint ? 'Line ' + action.line_hint : 'Not specified';
-  document.getElementById('rComment').textContent = action.comment || '—';
-  document.getElementById('rFix').textContent     = fixString || (action.type === 'approve' ? '(no fix required)' : '—');
-
-  const dotsEl = document.getElementById('rSev');
-  dotsEl.innerHTML = '';
-  for (let i = 1; i <= 5; i++) {
-    const dot = document.createElement('div');
-    dot.className = 'sd' + (i <= (action.severity || 0) ? ' on' : '');
-    dotsEl.appendChild(dot);
-  }
-
+  // Display first bug
+  displayBug(allBugs[0]);
+  updateBugNav();
+  
   document.getElementById('rTs').textContent = new Date().toLocaleTimeString();
   document.getElementById('rCard').classList.add('on');
 }
