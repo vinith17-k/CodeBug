@@ -2,7 +2,7 @@
 CodeBug FastAPI server with comprehensive code review and training endpoints.
 """
 
-from fastapi import FastAPI, Query, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import os, json, re, logging
@@ -20,11 +20,7 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 
 # Create the OpenEnv app (has /ws, /reset, /step, /state, /health, etc.)
-openenv_app = create_fastapi_app(
-    CodeBugEnvironment,
-    CodeReviewAction,
-    CodeReviewObservation
-)
+openenv_app = create_fastapi_app(CodeBugEnvironment)
 
 # Create a wrapper FastAPI app (takes precedence for /api/* routes)
 app = FastAPI(title="CodeBug API", version="2.0")
@@ -32,11 +28,14 @@ app = FastAPI(title="CodeBug API", version="2.0")
 # ========================================================================
 # POST /api/train - Run RL training
 # ========================================================================
+class TrainRequest(BaseModel):
+    episodes: int = 5
+
 @app.post("/api/train")
-async def run_real_training(episodes: int = Query(5, description="Number of training episodes to run")):
+async def run_real_training(body: TrainRequest):
     """Run the RL training loop for the specified number of episodes."""
     try:
-        stats = run_training(num_episodes=episodes, verbose=False)
+        stats = run_training(num_episodes=body.episodes, verbose=False)
         return {"status": "ok", "stats": stats}
     except Exception as e:
         import traceback

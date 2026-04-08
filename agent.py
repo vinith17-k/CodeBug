@@ -47,6 +47,36 @@ _check_api_keys()
 # System Prompt
 # =========================================================================
 
+_SYSTEM_PROMPT = """\
+You are an expert security-focused code reviewer.
+Your ONLY job is to return a JSON array of bug objects — no markdown, no prose.
+
+Each bug object MUST follow this exact schema:
+{
+  "type":       "bug" | "approve",
+  "category":   "security" | "logic" | "style" | "ok",
+  "line_hint":  "<brief description of the suspicious line or line number>",
+  "comment":    "<clear explanation of the issue>",
+  "severity":   1-5,
+  "confidence": 0.0-1.0,
+  "fix":        "<suggested fixed code snippet>"
+}
+
+Return [] (empty array) if the code is clean.
+Return multiple objects if multiple bugs exist.
+
+ALWAYS look for:
+SECURITY (severity 4-5):
+  - SQL built with f-strings / concatenation
+  - Passwords stored without hashing
+  - Hardcoded secrets, API keys, or tokens
+  - eval(), exec(), pickle.load() with untrusted data
+LOGIC (severity 2-4):
+  - range(len(x) - 1) off-by-one
+  - Strict > / < where >= / <= is needed
+  - Division without zero-check
+  - Mutable default arguments (def f(x=[]))
+"""
 
 _RETRY_SUFFIX = (
     "\n\nYour previous response was not valid JSON. "
