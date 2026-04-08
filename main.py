@@ -56,18 +56,23 @@ async def review_code(request: ReviewRequest):
 def analyze_code_locally(code: str, lang: str) -> dict:
     """Pattern-based code analysis - production would use LLM"""
     
+    code_lower = code.lower()
+    code_no_space = code.lower().replace(' ', '')
+    
     # === SECURITY BUGS (Highest Priority) ===
-    if re.search(r'f["\'\`].*?\$\{.*?\}|f["\'\`].*?\{.*?\}', code) and re.search(r'(select|insert|delete|update|from|where)', code, re.I):
+    # SQL Injection: f-string + SQL keywords + variable interpolation
+    if ('f"' in code or "f'" in code) and any(sql in code_lower for sql in ['select', 'insert', 'delete', 'update', 'from', 'where']) and '{' in code and '}' in code:
         return {
             "type": "bug",
             "category": "security",
             "severity": 5,
             "line_hint": 3,
-            "comment": "SQL injection: User input in f-string flows directly to database query.",
+            "comment": "SQL injection: f-string with variable interpolation in SQL query. User input flows directly to database.",
             "fix": "Use parameterized queries: cursor.execute('SELECT * FROM users WHERE id = ?', (uid,))"
         }
     
-    if re.search(r'(password|passwd|pwd)\s*[:=]\s*["\'].*["\']|".*password.*":\s*".*"', code, re.I):
+    # Hardcoded password
+    if re.search(r'(password|passwd|pwd)\s*[=:]\s*["\'][^"\']+["\']', code, re.I):
         return {
             "type": "bug",
             "category": "security",
@@ -77,17 +82,19 @@ def analyze_code_locally(code: str, lang: str) -> dict:
             "fix": "Use environment variables: password = os.getenv('DB_PASSWORD')"
         }
     
-    if re.search(r'(api_key|apikey|secret|token|private|private_key|secret_key)\s*[:=]\s*["\'][a-zA-Z0-9]{8,}["\']', code, re.I):
+    # Hardcoded API keys / secrets
+    if re.search(r'(api_key|apikey|secret_key|private_key|token|access_token)\s*[=:]\s*["\'][a-zA-Z0-9_\-]+["\']', code, re.I):
         return {
             "type": "bug",
             "category": "security",
             "severity": 4,
             "line_hint": 1,
-            "comment": "Hardcoded API key/secret detected. Move to environment variables.",
+            "comment": "Hardcoded API key or secret detected. Move to environment variables.",
             "fix": "api_key = os.getenv('API_KEY')\nif not api_key:\n    raise ValueError('API_KEY not set')"
         }
     
-    if re.search(r'eval\s*\(|exec\s*\(|pickle\.load|yaml\.load\s*\(', code):
+    # Code execution vulnerabilities
+    if re.search(r'\b(eval|exec)\s*\(', code) or 'pickle.load' in code or 'yaml.load' in code:
         return {
             "type": "bug",
             "category": "security",
@@ -98,27 +105,30 @@ def analyze_code_locally(code: str, lang: str) -> dict:
         }
     
     # === LOGIC BUGS ===
-    if re.search(r'(while\s+true|for\s+\(\s*;\s*;\s*\)|while\s*\(.*\))', code, re.I) and not re.search(r'(break|return|exit)', code):
+    # Infinite loops
+    if ('while true' in code_no_space or 'while(true)' in code_no_space or 'for(;;)' in code_no_space) and 'break' not in code_lower:
         return {
             "type": "bug",
             "category": "logic",
             "severity": 3,
             "line_hint": 2,
-            "comment": "Infinite loop detected. Loop never breaks or returns.",
-            "fix": "Add break condition: while condition: {...; break}"
+            "comment": "Infinite loop detected. Loop condition never becomes false.",
+            "fix": "Add a break condition or change the loop condition."
         }
     
-    if re.search(r'range\s*\(\s*len\s*\(\s*.*?\s*\)\s*-\s*1\s*\)', code):
+    # Off-by-one errors: range(len(x) - 1)
+    if re.search(r'range\s*\(\s*len\s*\([^)]+\)\s*-\s*1\s*\)', code):
         return {
             "type": "bug",
             "category": "logic",
             "severity": 3,
             "line_hint": 2,
             "comment": "Off-by-one error: range(len(x) - 1) skips the last element.",
-            "fix": "Use: for i in range(len(items)): or simply: for item in items:"
+            "fix": "Use range(len(items)) or simply: for item in items:"
         }
     
-    if re.search(r'if\s+(len\s*\(\s*\w+\s*\)\s*[>!=<]=?\s*0|len\s*\(\s*\w+\s*\)\s*!=\s*0)', code):
+    # Redundant length checks
+    if re.search(r'if\s+len\s*\([^)]+\)\s*[!=><]=*\s*0', code):
         return {
             "type": "bug",
             "category": "logic",
@@ -128,26 +138,29 @@ def analyze_code_locally(code: str, lang: str) -> dict:
             "fix": "Use: if items: instead of if len(items) != 0:"
         }
     
-    if lang == 'javascript' and re.search(r'[^=!=]\s*==\s*[^=]|[^=]\s*!=\s*[^=]', code):
-        return {
-            "type": "bug",
-            "category": "logic",
-            "severity": 2,
-            "line_hint": 3,
-            "comment": "Use strict equality (===) instead of ==. Subject to type coercion bugs.",
-            "fix": "Replace == with === and != with !==" 
-        }
-    
-    # === STYLE/BEST PRACTICES ===
-    if lang == 'javascript' and re.search(r'var\s+\w+\s*=', code):
-        return {
-            "type": "bug",
-            "category": "style",
-            "severity": 2,
-            "line_hint": 1,
-            "comment": "Use const/let instead of var. var has scope issues.",
-            "fix": "Replace var with const (or let if reassignment needed)"
-        }
+    # Type coercion bugs in JavaScript
+    if lang == 'javascript':
+        # Loose equality (== instead of ===)
+        if re.search(r'==\s|==[\'\"]|==\d|\s==', code) and not re.search(r'===', code):
+            return {
+                "type": "bug",
+                "category": "logic",
+                "severity": 2,
+                "line_hint": 3,
+                "comment": "Use strict equality (===) instead of ==. Prone to type coercion bugs.",
+                "fix": "Replace == with === and != with !=="
+            }
+        
+        # var instead of const/let
+        if re.search(r'\bvar\s+\w+\s*[=;]', code):
+            return {
+                "type": "bug",
+                "category": "style",
+                "severity": 2,
+                "line_hint": 1,
+                "comment": "Use const/let instead of var. var has scope issues.",
+                "fix": "Replace var with const (or let if reassignment needed)"
+            }
     
     # === DEFAULT: NO BUGS ===
     return {
