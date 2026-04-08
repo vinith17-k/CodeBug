@@ -20,7 +20,7 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 
 # Create the OpenEnv app (has /ws, /reset, /step, /state, /health, etc.)
-openenv_app = create_fastapi_app(CodeBugEnvironment)
+openenv_app = create_fastapi_app(CodeBugEnvironment, CodeReviewAction, CodeReviewObservation)
 
 # Create a wrapper FastAPI app (takes precedence for /api/* routes)
 app = FastAPI(title="CodeBug API", version="2.0")
