@@ -20,6 +20,7 @@ from config import (
 from environment import CodeReviewEnv
 from agent import review, call_llm
 from grader import grade
+from training_loop import run_training
 
 logger = logging.getLogger(__name__)
 
@@ -192,10 +193,6 @@ def get_fix_suggestion(code, ai_action):
 # --- Routes ---
 
 @app.route("/")
-def landing():
-    return render_template("landing.html")
-
-@app.route("/dashboard")
 def index():
     return render_template("index.html")
 
@@ -277,49 +274,26 @@ def get_history():
         "best_score": calculate_best_score()
     })
 
-@app.route("/api/auto-run", methods=["POST"])
+@app.route("/api/train", methods=["POST"])
 @limiter.limit(RATE_LIMIT_AUTO_RUN)
-def auto_run():
-    if STATE["is_running"]:
-        return jsonify({"error": "Already running"}), 400
-        
-    count = request.json.get("count", 1)
+def train():
+    episodes = request.json.get("episodes", 10)
     
-    def run_episodes(n):
-        STATE["is_running"] = True
-        for _ in range(n):
-            # Simulate a full episode flow
-            obs = env.reset()
-            # AI review
-            ai_action = review(obs["code"])
-            # Grade
-            ground_truth = env._get_answer(obs["episode_id"])
-            res = grade(ai_action, ground_truth)
-            
-            # Update state
-            STATE["total_reward"] += res.reward
-            STATE["episode_count"] += 1
-            
-            record = {
-                "episode_id": obs["episode_id"],
-                "snippet_id": obs["snippet_id"],
-                "ai_said": f"{ai_action.get('type')} / {ai_action.get('category')}",
-                "reward": res.reward,
-                "correct": res.correct,
-                "breakdown": res.breakdown,
-                "bug_type": res.bug_type
-            }
-            STATE["history"].append(record)
-            
-            time.sleep(0.8) # Artificial delay for judge presentation
-            
-        save_history_file()
-        STATE["is_running"] = False
+    # run synchronously to match frontend assumptions
+    try:
+        output_data = run_training(num_episodes=episodes, verbose=False, resume=True)
+        stats = output_data["overall_stats"]
+        return jsonify(stats)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    thread = threading.Thread(target=run_episodes, args=(count,))
-    thread.start()
-    
-    return jsonify({"status": "running", "count": count})
+@app.route("/api/health", methods=["GET"])
+def health():
+    return jsonify({
+        "status": "healthy",
+        "has_anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "has_openai": bool(os.environ.get("OPENAI_API_KEY"))
+    })
 
 @app.route("/api/upload", methods=["POST"])
 @limiter.limit(RATE_LIMIT_REVIEW)

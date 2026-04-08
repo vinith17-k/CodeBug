@@ -824,27 +824,23 @@ function mockReview(code) {
 }
 
 function renderResult(d) {
-  // If the backend wraps the result in ai_action, extract it.
-  const action = d.ai_action || d;
-  const fixString = (d.fix && d.fix.fixed_code) ? d.fix.fixed_code : action.fix;
-  
-  const badgeCls = action.category === 'security' ? 'sec'
-                 : action.category === 'logic'    ? 'lgc'
-                 : action.type === 'approve'      ? 'apr' : 'sty';
+  const badgeCls = d.category === 'security' ? 'sec'
+                 : d.category === 'logic'    ? 'lgc'
+                 : d.type === 'approve'      ? 'apr' : 'sty';
   const badge = document.getElementById('rBadge');
   badge.className = 'r-badge ' + badgeCls;
-  badge.textContent = action.type === 'approve' ? '✓ Approved' : '⚠ ' + (action.category || action.type);
+  badge.textContent = d.type === 'approve' ? '✓ Approved' : '⚠ ' + (d.category || d.type);
 
-  document.getElementById('rCat').textContent     = action.category || action.type || '—';
-  document.getElementById('rLine').textContent    = action.line_hint ? 'Line ' + action.line_hint : 'Not specified';
-  document.getElementById('rComment').textContent = action.comment || '—';
-  document.getElementById('rFix').textContent     = fixString || (action.type === 'approve' ? '(no fix required)' : '—');
+  document.getElementById('rCat').textContent     = d.category || d.type || '—';
+  document.getElementById('rLine').textContent    = d.line_hint ? 'Line ' + d.line_hint : 'Not specified';
+  document.getElementById('rComment').textContent = d.comment || '—';
+  document.getElementById('rFix').textContent     = d.fix || (d.type === 'approve' ? '(no fix required)' : '—');
 
   const dotsEl = document.getElementById('rSev');
   dotsEl.innerHTML = '';
   for (let i = 1; i <= 5; i++) {
     const dot = document.createElement('div');
-    dot.className = 'sd' + (i <= (action.severity || 0) ? ' on' : '');
+    dot.className = 'sd' + (i <= (d.severity || 0) ? ' on' : '');
     dotsEl.appendChild(dot);
   }
 
