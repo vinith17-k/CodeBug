@@ -309,6 +309,19 @@ textarea#codeInput {
   margin-bottom: 5px;
 }
 .r-field-value { font-family: var(--mono); font-size: .78rem; color: #c0bbb2; line-height: 1.6; }
+.confidence-bar {
+  display: flex; align-items: center; gap: 8px; margin-top: 4px;
+}
+.confidence-meter {
+  width: 100px; height: 6px; background: #262622; border-radius: 2px; overflow: hidden;
+}
+.confidence-fill {
+  height: 100%; background: linear-gradient(90deg, #d47e7e, #d4c27e, #7ed4a0);
+  transition: width .3s;
+}
+.confidence-pct {
+  font-size: .65rem; color: #888; font-family: var(--mono);
+}
 .sev-dots { display: flex; gap: 5px; margin-top: 4px; }
 .sd { width: 9px; height: 9px; border-radius: 50%; background: #2a2a28; }
 .sd.on { background: #d47e7e; }
@@ -318,6 +331,13 @@ textarea#codeInput {
   font-family: var(--mono); font-size: .73rem; color: #7ed4a0;
   white-space: pre-wrap; line-height: 1.65;
 }
+.export-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #161614; border: 1px solid #262622; border-radius: 2px;
+  color: #999; font-family: var(--mono); font-size: .65rem;
+  padding: 6px 12px; cursor: pointer; transition: all .2s; margin-top: 12px;
+}
+.export-btn:hover { background: #262622; border-color: #3a3a38; color: #ccc; }
 
 /* ── FEATURES ────────────────────────────────────────────── */
 #features { background: var(--surface); }
@@ -550,7 +570,10 @@ def get_user(uid):
             <option value="">— Select Language —</option>
             <option value="python">Python</option>
             <option value="javascript">JavaScript</option>
+            <option value="typescript">TypeScript</option>
             <option value="java">Java</option>
+            <option value="go">Go</option>
+            <option value="cpp">C++</option>
           </select>
           <button class="run-btn" id="runBtn" onclick="doReview()">
             <span id="runLbl">Analyze ↗</span>
@@ -594,6 +617,15 @@ def get_user(uid):
               <div class="sev-dots" id="rSev"></div>
             </div>
             <div class="r-field">
+              <div class="r-field-label">Confidence</div>
+              <div class="confidence-bar">
+                <div class="confidence-meter">
+                  <div class="confidence-fill" id="rConfidence" style="width: 0%"></div>
+                </div>
+                <span class="confidence-pct" id="rConfidencePct">—</span>
+              </div>
+            </div>
+            <div class="r-field">
               <div class="r-field-label">Line Hint</div>
               <div class="r-field-value" id="rLine">—</div>
             </div>
@@ -604,6 +636,7 @@ def get_user(uid):
             <div class="r-field">
               <div class="r-field-label">Suggested Fix</div>
               <pre class="r-fix" id="rFix"></pre>
+              <button class="export-btn" onclick="exportBugReport()">📥 Export to JSON</button>
             </div>
           </div>
         </div>
@@ -856,6 +889,12 @@ function displayBug(bug) {
   document.getElementById('rLine').textContent    = bug.line_hint ? 'Line ' + bug.line_hint : 'Not specified';
   document.getElementById('rComment').textContent = bug.comment || '—';
   
+  // Display confidence with progress bar
+  const confidence = bug.confidence || 0.5;
+  const confPercent = Math.round(confidence * 100);
+  document.getElementById('rConfidence').style.width = (confidence * 100) + '%';
+  document.getElementById('rConfidencePct').textContent = confPercent + '%';
+  
   const fixString = (bug.fix && bug.fix.fixed_code) ? bug.fix.fixed_code : bug.fix;
   document.getElementById('rFix').textContent     = fixString || (bug.type === 'approve' ? '(no fix required)' : '—');
 
@@ -1096,6 +1135,39 @@ function showFlash(msg) {
       <line x1="12" y1="16" x2="12.01" y2="16"/>
     </svg>
     <p style="color:#d47e7e">${msg}</p>`;
+}
+
+/* Export bug report as JSON */
+function exportBugReport() {
+  if (allBugs.length === 0) {
+    showFlash('No bugs to export. Run analysis first.');
+    return;
+  }
+  
+  const code = document.getElementById('codeInput').value;
+  const lang = document.getElementById('langSel').value;
+  
+  const report = {
+    timestamp: new Date().toISOString(),
+    language: lang,
+    code_length: code.length,
+    bugs_found: allBugs.length,
+    bugs: allBugs,
+    export_version: "2.0"
+  };
+  
+  const dataStr = JSON.stringify(report, null, 2);
+  const dataBlob = new Blob([dataStr], { type: 'application/json' });
+  const url = URL.createObjectURL(dataBlob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `codebug-report-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  
+  showFlash('✓ Report exported successfully!');
 }
 
 /* ── TRAINING ───────────────────────────────────────────── */
