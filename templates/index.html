@@ -935,11 +935,14 @@ async function doReview() {
     }
 
     const data = await res.json();
+    console.log('✓ Real API response received:', data);
     renderResult(data);
   } catch (err) {
-    console.error('API call failed:', err.message);
-    console.warn('Falling back to local analysis...');
-    renderResult(mockReview(code, lang));
+    console.error('⚠ API call failed:', err.message);
+    console.warn('Using fallback local analysis...');
+    const mockData = mockReview(code, lang);
+    console.log('Fallback result:', mockData);
+    renderResult(mockData);
   } finally {
     btn.disabled = false;
     document.getElementById('runLbl').textContent = 'Analyze ↗';
@@ -1069,7 +1072,8 @@ function mockReview(code, lang) {
     severity: 1, 
     line_hint: null,
     comment: 'No obvious bugs detected. Code looks clean.', 
-    fix: '' 
+    fix: '',
+    confidence: 1.0 
   };
 }
 
