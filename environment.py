@@ -1,174 +1,94 @@
-"""
-environment.py — Code-review RL environment.
+import uuid
+from openenv.core.env_server import Environment
+from models import CodeReviewAction, CodeReviewObservation, CodeReviewState
 
-Key improvements:
-  - reset() uses a shuffled queue that exhausts all episodes before cycling,
-    preventing repeated sampling of the same snippet within an epoch.
-  - Episode/answer paths come from config.py.
-  - Type annotations on all public methods.
-"""
-
-from __future__ import annotations
-
-import json
-import random
-from typing import Any
-
-from config import ANSWERS_FILE, EPISODES_FILE
-from grader import GradeResult, grade
-
-
-class CodeReviewEnv:
-    def __init__(
-        self,
-        episodes_path: str = EPISODES_FILE,
-        answers_path: str = ANSWERS_FILE,
-    ) -> None:
-        with open(episodes_path, "r") as f:
-            self.episodes: list[dict] = json.load(f)
-        with open(answers_path, "r") as f:
-            self.answers: list[dict] = json.load(f)
-
-        # Strip \r artifacts that cause terminal issues on Windows
-        for ep in self.episodes:
-            ep["code"] = ep["code"].replace("\r", "")
-        for ans in self.answers:
-            if "buggy_code" in ans:
-                ans["buggy_code"] = ans["buggy_code"].replace("\r", "")
-
-        self.current_episode: dict | None = None
-        self.episode_index   = 0
-        self.total_reward    = 0
-        self.correct_count   = 0
-        self.best_score      = -float("inf")
-        self.worst_score     = float("inf")
-
-        # Shuffled queue — exhausted before refilling (deduplication)
-        self._queue: list[dict] = []
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _refill_queue(self) -> None:
-        """Shuffle a fresh copy of all episodes into the queue."""
-        self._queue = list(self.episodes)
-        random.shuffle(self._queue)
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def reset(self) -> dict[str, Any]:
-        """
-        Pick the next unseen episode from this epoch's shuffled queue.
-        Once all episodes have been seen, reshuffle and start a new epoch.
-        """
-        if not self._queue:
-            self._refill_queue()
-
-        self.current_episode = self._queue.pop()
-
-        return {
-            "code":         self.current_episode["code"],
-            "episode_id":   self.current_episode["episode_id"],
-            "snippet_id":   self.current_episode["snippet_id"],
-            "instructions": (
-                "Review this code. Find bugs, security issues, or logic errors. "
-                "Respond in JSON with keys: type (flag or approve), "
-                "category (security/logic/style/ok), "
-                "line_hint (brief description of where the issue is), "
-                "comment (your explanation), severity (1-5)"
-            ),
+class CodeBugEnvironment(Environment):
+    SUPPORTS_CONCURRENT_SESSIONS = True
+    
+    # 3 minimum tasks: easy -> medium -> hard
+    TASKS = [
+        {
+            "difficulty": "easy",
+            "snippet": "def transfer(from_account, to_account, amount):\n    if from_account.balance > amount:\n        from_account.balance -= amount\n        to_account.balance += amount\n        return True\n    return False",
+            "truth": {"category": "logic", "severity": 4, "line_hint": 2}
+        },
+        {
+            "difficulty": "medium",
+            "snippet": "def find_max(numbers):\n    if not numbers:\n        return None\n    max_val = numbers[0]\n    for i in range(len(numbers) - 1):\n        if numbers[i] > max_val:\n            max_val = numbers[i]\n    return max_val",
+            "truth": {"category": "logic", "severity": 3, "line_hint": 5}
+        },
+        {
+            "difficulty": "hard",
+            "snippet": "def login(username, password):\n    query = f\"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'\"\n    user = db.execute(query)\n    if user:\n        return True\n    return False",
+            "truth": {"category": "security", "severity": 5, "line_hint": 3}
         }
+    ]
 
-    def step(self, ai_action: dict) -> tuple[int, bool, dict]:
-        """Execute one review step and return (reward, done, info)."""
-        ground_truth = self._get_answer(self.current_episode["episode_id"])
+    def __init__(self):
+        self._state = CodeReviewState()
 
-        result = grade(ai_action, ground_truth)
-        reward = result.reward
-
-        self.total_reward  += reward
-        self.episode_index += 1
-
-        if result.correct:
-            self.correct_count += 1
-
-        if reward > self.best_score:
-            self.best_score = reward
-        if reward < self.worst_score:
-            self.worst_score = reward
-
-        if ground_truth and "bug" in ground_truth:
-            truth_str = f"{ground_truth['bug']['type']} severity {ground_truth['bug']['severity']}"
-        else:
-            truth_str = "None"
-
-        info = {
-            "episode_id": self.current_episode["episode_id"],
-            "ai_said":    f"{ai_action.get('type')} / {ai_action.get('category')}",
-            "truth":      truth_str,
-            "correct":    result.correct,
-            "breakdown":  result.breakdown,
-        }
-
-        return reward, True, info
-
-    def _get_answer(self, episode_id: str) -> dict | None:
-        for ans in self.answers:
-            if ans["episode_id"] == episode_id:
-                return ans
-        return None
-
-    def get_stats(self) -> dict:
-        avg_r    = self.total_reward / self.episode_index if self.episode_index > 0 else 0
-        accuracy = self.correct_count / self.episode_index if self.episode_index > 0 else 0
-        return {
-            "total_reward":   self.total_reward,
-            "episodes_run":   self.episode_index,
-            "average_reward": avg_r,
-            "accuracy":       accuracy,
-            "best_score":     self.best_score  if self.best_score  != -float("inf") else 0,
-            "worst_score":    self.worst_score if self.worst_score !=  float("inf") else 0,
-        }
-
-    def render(self, observation: dict, ai_action: dict, reward: int, info: dict) -> None:
-        lines = observation["code"].splitlines()
-        code_preview = "".join(f"  {l}\n" for l in lines[:3])
-
-        print("\n" + "-" * 40)
-        print(f"Episode: {observation['episode_id']}")
-        print("Code snippet:")
-        print(code_preview, end="")
-        print("  ...")
-        print(f"\nAI said:    {info['ai_said']}")
-        print(f"Truth was:  {info['truth']}")
-        print(f"Correct:    {info['correct']}")
-        print(f"Reward:     {reward:+d}")
-        print(f"Total so far: {self.total_reward}")
-        print("-" * 40)
-
-
-# ---------------------------------------------------------------------------
-# Test block
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    env = CodeReviewEnv()
-    print("Starting 5-episode simulation (shuffled queue)...\n")
-
-    for i in range(5):
-        obs = env.reset()
-        fake_action = (
-            {"type": "flag", "category": "security", "line_hint": "line 3",
-             "comment": "Possible SQL injection vulnerability", "severity": 5}
-            if i % 2 == 0
-            else {"type": "approve", "category": "ok", "line_hint": "", "comment": "", "severity": 0}
+    def reset(self, seed=None, episode_id=None, **kwargs) -> CodeReviewObservation:
+        self._state = CodeReviewState(
+            episode_id=episode_id or str(uuid.uuid4()),
+            step_count=0,
+            current_task_idx=0,
+            total_score=0.0
         )
-        reward, done, info = env.step(fake_action)
-        env.render(obs, fake_action, reward, info)
+        task = self.TASKS[0]
+        return CodeReviewObservation(
+            done=False,
+            reward=None,
+            code_snippet=task["snippet"],
+            difficulty=task["difficulty"],
+            feedback="Scan the snippet and provide your code review action (category, severity, line_hint)."
+        )
 
-    print("\nFinal Stats:")
-    import pprint
-    pprint.pprint(env.get_stats())
+    def step(self, action: CodeReviewAction, timeout_s=None, **kwargs) -> CodeReviewObservation:
+        self._state.step_count += 1
+        
+        idx = self._state.current_task_idx
+        task = self.TASKS[idx]
+        truth = task["truth"]
+        
+        # Reward Scale 0.0 -> 1.0 (strict Hackathon requirement)
+        reward = 0.0
+        
+        is_correct_category = action.category.strip().lower() == truth["category"]
+        if is_correct_category:
+            reward += 0.5
+            
+        severity_diff = abs(action.severity - truth["severity"])
+        if severity_diff == 0:
+            reward += 0.3
+        elif severity_diff == 1:
+            reward += 0.15
+            
+        if action.line_hint == truth["line_hint"]:
+            reward += 0.2
+            
+        self._state.total_score += reward
+        self._state.current_task_idx += 1
+        
+        done = self._state.current_task_idx >= len(self.TASKS)
+        
+        if done:
+            next_snippet = ""
+            next_diff = ""
+            feedback = f"Final evaluation complete! Score for this run: {self._state.total_score:.2f} / {len(self.TASKS)}"
+        else:
+            next_task = self.TASKS[self._state.current_task_idx]
+            next_snippet = next_task["snippet"]
+            next_diff = next_task["difficulty"]
+            feedback = f"Task graded! Reward received: {reward:.2f}. Proceed to the next snippet."
+
+        return CodeReviewObservation(
+            done=done,
+            reward=reward,
+            code_snippet=next_snippet,
+            difficulty=next_diff,
+            feedback=feedback
+        )
+
+    @property
+    def state(self) -> CodeReviewState:
+        return self._state

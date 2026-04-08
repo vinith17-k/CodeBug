@@ -1,0 +1,6 @@
+name: "CodeBug Review Environment"
+version: "1.0.0"
+description: "AI Agent performs Code Review (finding logic, security bugs) across 3 distinct tasks of sequential difficulties (easy, medium, hard)."
+entry_point: "main:app"
+author: "CodeBug Team"
+tags: ["rl", "code-review", "agent", "security"]

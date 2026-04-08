@@ -1,40 +1,45 @@
-# RL Code Reviewer
+# CodeBug - OpenEnv Hackathon Submission
 
-An RL-trained AI agent that reviews code like a senior engineer.
-Built for the Code With Antigravity Hackathon.
+CodeBug is an RL environment designed to train agents to analyze and review Python code. The goal is to detect underlying issues within code snippets, determining category, severity, and the specific line where the bug resides.
 
-## What it does
-- Reviews Python, JS, Java and other code files for bugs
-- Catches security vulnerabilities (SQL injection, plain-text passwords)
-- Finds logic errors (off-by-one, wrong operators)
-- Suggests fixes with a before/after diff view
-- Trained with Reinforcement Learning — gets smarter every episode
+## Action & Observation Spaces
 
-## Tech Stack
-- Python + Flask backend
-- Anthropic Claude API (claude-haiku) for AI reviews
-- Vanilla JavaScript frontend
-- RL environment with custom reward function
-- Chart.js for training visualization
+### Observation Space (`CodeReviewObservation`)
+Provides the agent with the contextual tools to analyze the bug:
+- `code_snippet` (str): The snippet containing a logic, security, or syntax risk.
+- `difficulty` (str): Represents the difficulty of the task (easy, medium, hard).
+- `feedback` (str): Feedback string returned from the environment upon grading an action.
 
-## How to run locally
-1. Install dependencies: `pip install -r requirements.txt`
-2. Set API keys: 
-   - `set ANTHROPIC_API_KEY=your_key_here` (Windows)
-   - `export ANTHROPIC_API_KEY=your_key_here` (Mac/Linux)
-3. Run the server: `python app.py`
-4. Open http://localhost:5000
+### Action Space (`CodeReviewAction`)
+The agent's review and determination is returned:
+- `category` (str): Type of the bug (logic, security, style, approve). 
+- `severity` (int): Scale of 1 to 5.
+- `line_hint` (int): Exact line number containing the vulnerability.
+- `comment` (str): Short explanation of the bug found.
 
-## Project Structure
-- `bug_bank.py`      — bug injection engine
-- `environment.py`   — RL environment (exam room)
-- `grader.py`        — reward function
-- `agent.py`         — AI reviewer (calls Claude API)
-- `training_loop.py` — training loop
-- `app.py`           — Flask web server
-- `templates/`       — HTML landing & dashboard
+## Setup Instructions
 
-## Built with
-Google Antigravity IDE + Claude AI
+### Installation
 
-© 2025 RL Code Reviewer. Built with ♥ for Antigravity Hackathon.
+Install dependencies natively:
+```bash
+pip install -r requirements.txt
+```
+
+### Running the Server locally
+
+Start the OpenEnv FastAPI backend server locally on port 7860:
+```bash
+uvicorn main:app --host 0.0.0.0 --port 7860
+```
+
+### Baseline Inference
+
+You can run the baseline inference script strictly with an OpenAI compatible API:
+```bash
+export API_BASE_URL="https://api.openai.com/v1"
+export MODEL_NAME="gpt-4o-mini"
+export HF_TOKEN="sk-your-huggingface-or-openai-key"
+
+python inference.py
+```
