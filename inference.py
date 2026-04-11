@@ -118,7 +118,7 @@ def call_llm(code: str, difficulty: str) -> dict:
 def score_action(action: dict, truth: dict) -> float:
     """
     Score the agent's action against ground truth.
-    Returns a float in [0.0, 1.0].
+    Returns a float strictly between 0.0 and 1.0 (exclusive).
     """
     reward = 0.0
 
@@ -137,7 +137,9 @@ def score_action(action: dict, truth: dict) -> float:
     if action.get("line_hint") is not None and truth["category"] != "approve":
         reward += 0.2
 
-    return round(min(reward, 1.0), 4)
+    # Clamp to (0.0, 1.0) exclusive: 0.0 → 0.01, 1.0 → 0.99, others scale proportionally
+    clamped = 0.01 + (min(reward, 1.0) * 0.98)
+    return round(clamped, 4)
 
 
 def run_inference():
