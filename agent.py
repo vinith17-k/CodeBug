@@ -11,9 +11,11 @@ logger = logging.getLogger(__name__)
 MAX_TOKENS = 1024
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o")
 # Hackathon / Spaces: HF_TOKEN; local dev may use OPENAI_API_KEY
-_LLM_KEY = (os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY") or "").strip()
+_LLM_KEY = (
+    os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY") or ""
+).strip()
 has_openai_client = bool(_LLM_KEY)
 
 
@@ -91,6 +93,7 @@ def build_user_message(code: str, retry: bool = False) -> str:
 # LLM call
 # ---------------------------------------------------------------------------
 
+
 def call_llm(prompt: str, *, system: str | None = None) -> str | None:
     """
     Call the OpenAI-compatible Chat Completions API (HF_TOKEN or OPENAI_API_KEY).
@@ -119,6 +122,7 @@ def call_llm(prompt: str, *, system: str | None = None) -> str | None:
 # ---------------------------------------------------------------------------
 # JSON parsing helper
 # ---------------------------------------------------------------------------
+
 
 def _parse_json(raw: str) -> dict | None:
     """Try direct parse, then regex-extracted substring."""
@@ -151,65 +155,81 @@ def mock_review(code: str) -> list:
 
     # SQL injection
     if 'f"select' in code_lower or "f'select" in code_lower:
-        bugs.append({
-            "type": "bug",
-            "category": "security",
-            "severity": 5,
-            "comment": "SQL injection: f-string with variable interpolation in SQL query.",
-            "fix": "Use parameterized queries: cursor.execute('SELECT * FROM users WHERE id = ?', (uid,))",
-            "confidence": 0.95,
-            "line_hint": "database query line"
-        })
+        bugs.append(
+            {
+                "type": "bug",
+                "category": "security",
+                "severity": 5,
+                "comment": "SQL injection: f-string with variable interpolation in SQL query.",
+                "fix": "Use parameterized queries: cursor.execute('SELECT * FROM users WHERE id = ?', (uid,))",
+                "confidence": 0.95,
+                "line_hint": "database query line",
+            }
+        )
 
     # Hardcoded password
     if "hashed = password" in code_lower or (
-        "password" in code_lower and "hash" not in code_lower and "bcrypt" not in code_lower
+        "password" in code_lower
+        and "hash" not in code_lower
+        and "bcrypt" not in code_lower
     ):
-        bugs.append({
-            "type": "bug",
-            "category": "security",
-            "severity": 5,
-            "comment": "Hardcoded password/credential detected.",
-            "fix": "Use environment variables: os.getenv('DB_PASSWORD')",
-            "confidence": 0.98,
-            "line_hint": "password assignment line"
-        })
+        bugs.append(
+            {
+                "type": "bug",
+                "category": "security",
+                "severity": 5,
+                "comment": "Hardcoded password/credential detected.",
+                "fix": "Use environment variables: os.getenv('DB_PASSWORD')",
+                "confidence": 0.98,
+                "line_hint": "password assignment line",
+            }
+        )
 
     # Off-by-one
     if "range(len(" in code_lower and "- 1" in code_lower:
-        bugs.append({
-            "type": "bug",
-            "category": "logic",
-            "severity": 3,
-            "comment": "Off-by-one error: range(len(x)-1) skips the last element.",
-            "fix": "Use range(len(arr)) or check bounds: if i+1 < len(arr)",
-            "confidence": 0.85,
-            "line_hint": "loop range call"
-        })
+        bugs.append(
+            {
+                "type": "bug",
+                "category": "logic",
+                "severity": 3,
+                "comment": "Off-by-one error: range(len(x)-1) skips the last element.",
+                "fix": "Use range(len(arr)) or check bounds: if i+1 < len(arr)",
+                "confidence": 0.85,
+                "line_hint": "loop range call",
+            }
+        )
 
     # Division by zero
     if "/ 0" in code_lower:
-        bugs.append({
-            "type": "bug",
-            "category": "logic",
-            "severity": 3,
-            "comment": "Potential division by zero. Check denominator is non-zero.",
-            "fix": "Add check: if denominator != 0: result = numerator / denominator",
-            "confidence": 0.99,
-            "line_hint": "division line"
-        })
+        bugs.append(
+            {
+                "type": "bug",
+                "category": "logic",
+                "severity": 3,
+                "comment": "Potential division by zero. Check denominator is non-zero.",
+                "fix": "Add check: if denominator != 0: result = numerator / denominator",
+                "confidence": 0.99,
+                "line_hint": "division line",
+            }
+        )
 
     # Strict comparison
-    if ("> amount" in code_lower or "< amount" in code_lower) and ">=" not in code_lower and "<=" not in code_lower:
-        bugs.append({
-            "type": "bug",
-            "category": "logic",
-            "severity": 4,
-            "comment": "Strict > / < in balance check; may miss the equality edge case.",
-            "fix": "Use >= or <= to include equality edge case.",
-            "confidence": 0.8,
-            "line_hint": "comparison check"
-        })
+    if (
+        ("> amount" in code_lower or "< amount" in code_lower)
+        and ">=" not in code_lower
+        and "<=" not in code_lower
+    ):
+        bugs.append(
+            {
+                "type": "bug",
+                "category": "logic",
+                "severity": 4,
+                "comment": "Strict > / < in balance check; may miss the equality edge case.",
+                "fix": "Use >= or <= to include equality edge case.",
+                "confidence": 0.8,
+                "line_hint": "comparison check",
+            }
+        )
 
     return bugs
 
@@ -219,7 +239,13 @@ def mock_review(code: str) -> list:
 # ---------------------------------------------------------------------------
 
 _REQUIRED_KEYS = {"type", "category", "line_hint", "comment", "severity"}
-_DEFAULTS = {"type": "approve", "category": "ok", "line_hint": "", "comment": "", "severity": 0}
+_DEFAULTS = {
+    "type": "approve",
+    "category": "ok",
+    "line_hint": "",
+    "comment": "",
+    "severity": 0,
+}
 
 
 def review(code: str) -> list:
@@ -239,7 +265,9 @@ def review(code: str) -> list:
 
     if result is None or not isinstance(result, list):
         # One retry: tell the model its output was invalid
-        logger.warning("LLM returned malformed JSON or not a list — retrying with correction hint.")
+        logger.warning(
+            "LLM returned malformed JSON or not a list — retrying with correction hint."
+        )
         user_msg_retry = build_user_message(code, retry=True)
         raw_retry = call_llm(user_msg_retry, system=_SYSTEM_PROMPT)
         result = _parse_json(raw_retry)
@@ -262,10 +290,19 @@ def review(code: str) -> list:
 
 if __name__ == "__main__":
     _TESTS = [
-        ("SQL injection", "def login(u, p, db):\n    q = f\"SELECT * FROM users WHERE username='{u}'\"\n    return db.execute(q)"),
-        ("Off-by-one",    "def find_max(nums):\n    mx = nums[0]\n    for i in range(len(nums) - 1):\n        if nums[i] > mx: mx = nums[i]\n    return mx"),
-        ("Plain password", "def save(u, pw, db):\n    db.insert('users', {'username': u, 'password': pw})"),
-        ("Clean code",    "def add(a: int, b: int) -> int:\n    return a + b"),
+        (
+            "SQL injection",
+            "def login(u, p, db):\n    q = f\"SELECT * FROM users WHERE username='{u}'\"\n    return db.execute(q)",
+        ),
+        (
+            "Off-by-one",
+            "def find_max(nums):\n    mx = nums[0]\n    for i in range(len(nums) - 1):\n        if nums[i] > mx: mx = nums[i]\n    return mx",
+        ),
+        (
+            "Plain password",
+            "def save(u, pw, db):\n    db.insert('users', {'username': u, 'password': pw})",
+        ),
+        ("Clean code", "def add(a: int, b: int) -> int:\n    return a + b"),
     ]
 
     print("=== Agent Tests ===\n")

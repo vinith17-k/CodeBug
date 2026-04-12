@@ -27,7 +27,7 @@ from tasks.medium.grader import grade as grade_task_medium_002
 from grader import grade as root_rubric_grade
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o")
 
 _TASK_GRADERS = {
     "task_easy_001": grade_task_easy_001,
@@ -81,7 +81,7 @@ TASKS = [
         "task_id": "task_extra_004",
         "difficulty": "hard",
         "code": (
-            "API_KEY = \"sk-1234567890abcdef\"\n"
+            'API_KEY = "sk-1234567890abcdef"\n'
             "def process_data(data):\n"
             "    return data.upper()"
         ),
@@ -89,11 +89,7 @@ TASKS = [
     {
         "task_id": "task_extra_005",
         "difficulty": "medium",
-        "code": (
-            "def divide(a, b):\n"
-            "    # Potential bug here\n"
-            "    return a / b"
-        ),
+        "code": ("def divide(a, b):\n    # Potential bug here\n    return a / b"),
     },
 ]
 
@@ -173,12 +169,19 @@ def run_task(client: OpenAI, task: dict) -> dict:
     user = f"Difficulty: {task['difficulty']}\n\nReview this code:\n\n{task['code']}"
     data = _chat_json(client, user)
     if not data:
-        return {"category": "approve", "severity": 1, "line_hint": None, "comment": "parse_error"}
+        return {
+            "category": "approve",
+            "severity": 1,
+            "line_hint": None,
+            "comment": "parse_error",
+        }
     return data
 
 
 def run_inference() -> None:
-    llm_key = (os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY") or "").strip()
+    llm_key = (
+        os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY") or ""
+    ).strip()
     if not llm_key:
         print(
             "[ERROR] Set HF_TOKEN or OPENAI_API_KEY to your OpenAI-compatible API key.",
@@ -190,7 +193,13 @@ def run_inference() -> None:
 
     # Ensure grader.py rubric returns (0,1); does not change [STEP] scores (those use manifest graders).
     _san = root_rubric_grade(
-        {"type": "approve", "category": "ok", "line_hint": "", "comment": "", "severity": 0},
+        {
+            "type": "approve",
+            "category": "ok",
+            "line_hint": "",
+            "comment": "",
+            "severity": 0,
+        },
         {"bug": {"type": "none", "severity": 0, "description": "", "line_hint": ""}},
     )
     if not (isinstance(_san.reward, float) and 0.0 < _san.reward < 1.0):
