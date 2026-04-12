@@ -1,44 +1,38 @@
-
 import os
 import sys
 import json
 import re
 import logging
 
+from openai import OpenAI
+
 logger = logging.getLogger(__name__)
 
-# Configuration
-ANTHROPIC_MODEL = "claude-3-5-haiku-20241022"
-OPENAI_MODEL = "gpt-4o-mini"
 MAX_TOKENS = 1024
 
-# Check for available API keys
-has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
-has_openai = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+# Hackathon / Spaces: HF_TOKEN; local dev may use OPENAI_API_KEY
+_LLM_KEY = (os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY") or "").strip()
+has_openai_client = bool(_LLM_KEY)
 
-def _check_api_keys():
-    """Warn if no LLM APIs are configured"""
-    if not (has_anthropic or has_openai):
+
+def _check_api_keys() -> None:
+    if not has_openai_client:
         print(
             "\n"
             "╔══════════════════════════════════════════════════════════╗\n"
             "║  WARNING: No LLM API key found.                          ║\n"
             "║                                                          ║\n"
-            "║  Set at least one of:                                    ║\n"
-            "║    ANTHROPIC_API_KEY   (preferred — uses Claude Haiku)   ║\n"
-            "║    OPENAI_API_KEY      (fallback — uses GPT-4o-mini)     ║\n"
+            "║  Set HF_TOKEN (OpenAI-compatible key) or OPENAI_API_KEY  ║\n"
+            "║  Optional: API_BASE_URL, MODEL_NAME                      ║\n"
             "║                                                          ║\n"
-            "║  The server will start, but ALL reviews will fall back   ║\n"
-            "║  to the local mock reviewer.                             ║\n"
+            "║  The server will start, but reviews use the mock engine. ║\n"
             "╚══════════════════════════════════════════════════════════╝\n",
             file=sys.stderr,
         )
         return
-
-    if has_anthropic:
-        logger.info("API key found: Anthropic (primary)")
-    if has_openai:
-        logger.info("API key found: OpenAI (fallback)")
+    logger.info("OpenAI client configured (HF_TOKEN or OPENAI_API_KEY)")
 
 
 _check_api_keys()
@@ -99,48 +93,27 @@ def build_user_message(code: str, retry: bool = False) -> str:
 
 def call_llm(prompt: str, *, system: str | None = None) -> str | None:
     """
-    Try Anthropic first, then OpenAI.  Returns the raw text response or None.
-    Exceptions are always logged — never silently swallowed.
+    Call the OpenAI-compatible Chat Completions API (HF_TOKEN or OPENAI_API_KEY).
+    Returns raw assistant text or None on failure.
     """
-    # --- Anthropic ---
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if anthropic_key:
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=anthropic_key)
-            kwargs: dict = {
-                "model":      ANTHROPIC_MODEL,
-                "max_tokens": MAX_TOKENS,
-                "messages":   [{"role": "user", "content": prompt}],
-            }
-            if system:
-                kwargs["system"] = system
-            message = client.messages.create(**kwargs)
-            return message.content[0].text
-        except Exception as exc:
-            logger.error("Anthropic call failed: %s: %s", type(exc).__name__, exc)
-
-    # --- OpenAI fallback ---
-    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if openai_key:
-        try:
-            import openai
-            client = openai.OpenAI(api_key=openai_key)
-            messages = []
-            if system:
-                messages.append({"role": "system", "content": system})
-            messages.append({"role": "user", "content": prompt})
-            response = client.chat.completions.create(
-                model=OPENAI_MODEL,
-                max_tokens=MAX_TOKENS,
-                messages=messages,
-            )
-            return response.choices[0].message.content
-        except Exception as exc:
-            logger.error("OpenAI call failed: %s: %s", type(exc).__name__, exc)
-
-    logger.warning("All LLM providers failed — falling back to mock reviewer.")
-    return None
+    if not _LLM_KEY:
+        logger.warning("No HF_TOKEN / OPENAI_API_KEY — mock reviewer.")
+        return None
+    try:
+        client = OpenAI(api_key=_LLM_KEY, base_url=API_BASE_URL)
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            max_tokens=MAX_TOKENS,
+            messages=messages,
+        )
+        return response.choices[0].message.content
+    except Exception as exc:
+        logger.error("OpenAI client call failed: %s: %s", type(exc).__name__, exc)
+        return None
 
 
 # ---------------------------------------------------------------------------

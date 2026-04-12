@@ -1,50 +1,34 @@
 """
-inference.py — CodeBug baseline inference script.
+inference.py — Hackathon baseline inference (repo root).
 
-Strictly follows the Meta PyTorch Hackathon pre-submission checklist:
-  - Environment variables: API_BASE_URL, MODEL_NAME, HF_TOKEN
-  - Defaults ONLY for API_BASE_URL and MODEL_NAME (not HF_TOKEN)
-  - All LLM calls use `from openai import OpenAI` configured via these variables
-  - Stdout logs follow the required [START] / [STEP] / [END] format exactly
+Requires env: HF_TOKEN (no default). Optional: API_BASE_URL, MODEL_NAME (OpenAI-compatible defaults).
+Uses openai.OpenAI only. Emits exact stdout lines for the evaluator: [START], [STEP] … score=…, [END].
 """
 
-import os
+from __future__ import annotations
+
 import json
+import os
+import re
 import sys
 
 from openai import OpenAI
-from tasks.easy.grader import grade as grade_task_easy_001
-from tasks.medium.grader import grade as grade_task_medium_002
-from tasks.hard.grader import grade as grade_task_hard_003
-from tasks.extra1.grader import grade as grade_task_extra_004
-from tasks.extra2.grader import grade as grade_task_extra_005
 
-# ─────────────────────────────────────────────────────────────
-# Environment variables (checklist requirement)
-# Defaults ONLY for API_BASE_URL and MODEL_NAME — NOT HF_TOKEN
-# ─────────────────────────────────────────────────────────────
+from grader import grade
+
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME   = os.environ.get("MODEL_NAME",   "gpt-4o-mini")
-HF_TOKEN     = os.environ.get("HF_TOKEN")     # No default — must be set by user
+MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 if not HF_TOKEN:
     print("[ERROR] HF_TOKEN environment variable is required but not set.", flush=True)
     sys.exit(1)
 
-# ─────────────────────────────────────────────────────────────
-# OpenAI client — configured strictly via the env variables
-# ─────────────────────────────────────────────────────────────
-client = OpenAI(
-    api_key=HF_TOKEN,
-    base_url=API_BASE_URL,
-)
+client = OpenAI(api_key=HF_TOKEN, base_url=API_BASE_URL)
 
-# ─────────────────────────────────────────────────────────────
-# Code review tasks (5 tasks)
-# ─────────────────────────────────────────────────────────────
 TASKS = [
     {
-        "id": "task_easy_001",
+        "task_id": "task_easy_001",
         "difficulty": "easy",
         "code": (
             "def transfer(from_account, to_account, amount):\n"
@@ -54,10 +38,17 @@ TASKS = [
             "        return True\n"
             "    return False"
         ),
-        "truth": {"category": "logic", "severity": 4, "line_hint": 2},
+        "ground_truth": {
+            "bug": {
+                "type": "logic",
+                "severity": 4,
+                "description": "Strict > should likely be >= for balance transfer edge case",
+                "line_hint": "if balance check",
+            }
+        },
     },
     {
-        "id": "task_medium_002",
+        "task_id": "task_medium_002",
         "difficulty": "medium",
         "code": (
             "def find_max(numbers):\n"
@@ -69,10 +60,17 @@ TASKS = [
             "            max_val = numbers[i]\n"
             "    return max_val"
         ),
-        "truth": {"category": "logic", "severity": 3, "line_hint": 5},
+        "ground_truth": {
+            "bug": {
+                "type": "logic",
+                "severity": 3,
+                "description": "Off-by-one: range(len(numbers)-1) skips last element",
+                "line_hint": "for loop range",
+            }
+        },
     },
     {
-        "id": "task_hard_003",
+        "task_id": "task_hard_003",
         "difficulty": "hard",
         "code": (
             "def login(username, password):\n"
@@ -83,109 +81,149 @@ TASKS = [
             "        return True\n"
             "    return False"
         ),
-        "truth": {"category": "security", "severity": 5, "line_hint": 2},
+        "ground_truth": {
+            "bug": {
+                "type": "security",
+                "severity": 5,
+                "description": "SQL injection via f-string query",
+                "line_hint": "query construction line",
+            }
+        },
     },
     {
-        "id": "task_extra_004",
+        "task_id": "task_extra_004",
         "difficulty": "hard",
         "code": (
             "API_KEY = \"sk-1234567890abcdef\"\n"
             "def process_data(data):\n"
             "    return data.upper()"
         ),
-        "truth": {"category": "security", "severity": 5, "line_hint": 1},
+        "ground_truth": {
+            "bug": {
+                "type": "security",
+                "severity": 5,
+                "description": "Hardcoded API key / secret",
+                "line_hint": "API_KEY assignment",
+            }
+        },
     },
     {
-        "id": "task_extra_005",
+        "task_id": "task_extra_005",
         "difficulty": "medium",
         "code": (
             "def divide(a, b):\n"
             "    # Potential bug here\n"
             "    return a / b"
         ),
-        "truth": {"category": "logic", "severity": 3, "line_hint": 3},
+        "ground_truth": {
+            "bug": {
+                "type": "logic",
+                "severity": 3,
+                "description": "Division without zero check",
+                "line_hint": "return division",
+            }
+        },
     },
 ]
 
-SYSTEM_PROMPT = """\
-You are a code review agent. Your task is to identify bugs in code snippets.
-Return ONLY a valid JSON object with this exact schema (no markdown, no prose):
+SYSTEM_PROMPT = """You are a code reviewer. Respond with ONLY a JSON object (no markdown) using this schema:
 {
-  "category": "logic" | "security" | "style" | "approve",
-  "severity": <integer 1-5>,
-  "line_hint": <integer line number or null>,
-  "comment": "<short description of the bug>"
+  "type": "flag" or "approve",
+  "category": "security" or "logic" or "style" or "ok",
+  "line_hint": "<string, line or location description>",
+  "comment": "<string explanation>",
+  "severity": <integer 1-5>
 }
-"""
+Use type \"flag\" if you report a bug, \"approve\" if the snippet is fine."""
 
 
-def call_llm(code: str, difficulty: str) -> dict:
-    """Call LLM via OpenAI client and parse the structured JSON response."""
-    user_prompt = (
-        f"Difficulty level: {difficulty}\n\n"
-        f"Review the following code and identify any bugs:\n\n{code}"
+def _parse_llm_json(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        m = re.search(r"\{[\s\S]*\}", raw)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+    return {}
+
+
+def _coerce_action(data: dict) -> dict:
+    """Shape model output for grader.grade(ai_action, ground_truth)."""
+    typ = str(data.get("type", "approve")).strip().lower()
+    if typ not in ("flag", "approve"):
+        typ = "approve"
+    cat = str(data.get("category", "ok")).strip().lower()
+    if cat not in ("security", "logic", "style", "ok"):
+        cat = "ok"
+    lh = data.get("line_hint", "")
+    if lh is None:
+        lh = ""
+    lh = str(lh).strip()
+    comment = str(data.get("comment", "")).strip()
+    try:
+        sev = int(data.get("severity", 0))
+    except (TypeError, ValueError):
+        sev = 0
+    return {
+        "type": typ,
+        "category": cat,
+        "line_hint": lh,
+        "comment": comment,
+        "severity": sev,
+    }
+
+
+def run_task(task: dict) -> dict:
+    user = (
+        f"Difficulty: {task['difficulty']}\n\n"
+        f"Review this code:\n\n{task['code']}"
     )
-
     response = client.chat.completions.create(
         model=MODEL_NAME,
+        max_tokens=300,
+        temperature=0.2,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": user_prompt},
+            {"role": "user", "content": user},
         ],
         response_format={"type": "json_object"},
-        temperature=0.2,
     )
-
     raw = response.choices[0].message.content
-    return json.loads(raw)
+    parsed = _parse_llm_json(raw)
+    if not parsed:
+        return {
+            "type": "approve",
+            "category": "ok",
+            "line_hint": "",
+            "comment": "parse_error",
+            "severity": 0,
+        }
+    return _coerce_action(parsed)
 
 
-# Same callables as openenv.yaml `grader:` entries — validators compare [STEP] rewards to these.
-_TASK_GRADERS = {
-    "task_easy_001": grade_task_easy_001,
-    "task_medium_002": grade_task_medium_002,
-    "task_hard_003": grade_task_hard_003,
-    "task_extra_004": grade_task_extra_004,
-    "task_extra_005": grade_task_extra_005,
-}
-
-
-def grade_action_for_task(task_id: str, action: dict) -> float:
-    """Delegate to the YAML-configured grader so stdout matches manifest grading exactly."""
-    grader = _TASK_GRADERS[task_id]
-    return round(float(grader(action)), 6)
-
-
-def run_inference():
-    total_reward = 0.0
-
-    # ── [START] ───────────────────────────────────────────────
-    print(f"[START] api_base={API_BASE_URL} model={MODEL_NAME} tasks={len(TASKS)}", flush=True)
-
+def run_inference() -> None:
+    print("[START]", flush=True)
     for task in TASKS:
-        task_id   = task["id"]
-        code      = task["code"]
-        difficulty = task["difficulty"]
-
-        # ── [STEP] send action ─────────────────────────────────
+        tid = task["task_id"]
         try:
-            action = call_llm(code, difficulty)
+            action = run_task(task)
         except Exception as exc:
-            action = {"category": "approve", "severity": 1, "line_hint": None, "comment": str(exc)}
-
-        reward = grade_action_for_task(task_id, action)
-        total_reward += reward
-
-        print(
-            f"[STEP] task_id={task_id} difficulty={difficulty} "
-            f"category={action.get('category')} severity={action.get('severity')} "
-            f"reward={reward:.4f}",
-            flush=True,
-        )
-
-    # ── [END] ─────────────────────────────────────────────────
-    avg_reward = total_reward / len(TASKS)
-    print(f"[END] total_reward={total_reward:.4f} avg_reward={avg_reward:.4f}", flush=True)
+            action = {
+                "type": "approve",
+                "category": "ok",
+                "line_hint": "",
+                "comment": str(exc),
+                "severity": 0,
+            }
+        result = grade(action, task["ground_truth"])
+        score = result.reward
+        print(f"[STEP] task_id={tid} score={score}", flush=True)
+    print("[END]", flush=True)
 
 
 if __name__ == "__main__":

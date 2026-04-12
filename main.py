@@ -19,9 +19,10 @@ try:
 except ImportError:
     _AGENT_IMPORTED = False
 
-_HAS_ANTHROPIC = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
-_HAS_OPENAI    = bool(os.environ.get("OPENAI_API_KEY", "").strip())
-HAS_LLM = _AGENT_IMPORTED and (_HAS_ANTHROPIC or _HAS_OPENAI)
+_HAS_HF_OR_OPENAI = bool(
+    (os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY") or "").strip()
+)
+HAS_LLM = _AGENT_IMPORTED and _HAS_HF_OR_OPENAI
 
 logger = logging.getLogger(__name__)
 

@@ -30,6 +30,40 @@ from config import (
 )
 
 
+def _raw_reward_bounds() -> tuple[int, int]:
+    """Worst and best achievable integer scores in grade() (single step)."""
+    penalties = (
+        PENALTY_WRONG_CATEGORY,
+        PENALTY_MISS_CRITICAL,
+        PENALTY_MISS_HIGH,
+        PENALTY_MISS_MEDIUM,
+        PENALTY_MISS_LOW,
+        PENALTY_UNKNOWN_ACTION,
+    )
+    min_r = min(penalties)
+    bundles = (
+        REWARD_SECURITY_CATCH + REWARD_SEVERITY_EXACT + REWARD_COMMENT_LONG + REWARD_LINE_HINT,
+        REWARD_LOGIC_CATCH + REWARD_SEVERITY_EXACT + REWARD_COMMENT_LONG + REWARD_LINE_HINT,
+        REWARD_OTHER_CATCH + REWARD_SEVERITY_EXACT + REWARD_COMMENT_LONG + REWARD_LINE_HINT,
+        REWARD_PARTIAL_CREDIT,
+        REWARD_CLEAN_APPROVE,
+    )
+    max_r = max(bundles)
+    return min_r, max_r
+
+
+_RAW_MIN, _RAW_MAX = _raw_reward_bounds()
+
+
+def _normalize_reward(raw: int) -> float:
+    """Map integer rubric score to (0, 1) exclusive for hackathon / OpenEnv validators."""
+    clamped = max(_RAW_MIN, min(_RAW_MAX, raw))
+    if _RAW_MAX == _RAW_MIN:
+        return 0.5
+    scaled = (clamped - _RAW_MIN) / (_RAW_MAX - _RAW_MIN)
+    return round(0.01 + scaled * 0.98, 4)
+
+
 # ---------------------------------------------------------------------------
 # GradeResult
 # ---------------------------------------------------------------------------
@@ -38,7 +72,7 @@ from config import (
 class GradeResult:
     def __init__(
         self,
-        reward: int,
+        reward: float,
         breakdown: list[str],
         correct: bool,
         bug_type: str = "unknown",
@@ -54,7 +88,7 @@ class GradeResult:
         lines = [
             "GRADE SUMMARY",
             "-" * 25,
-            f"Reward:    {self.reward:+d}",
+            f"Reward:    {self.reward:+.4f} (normalized 0–1)",
             f"Correct:   {'Yes' if self.correct else 'No'}",
             f"Bug was:   {self.bug_type} (severity {self.bug_severity})",
             "",
@@ -63,7 +97,7 @@ class GradeResult:
         for entry in self.breakdown:
             lines.append(f"  {entry}")
         lines.append("-" * 25)
-        lines.append(f"Total: {self.reward:+d}")
+        lines.append(f"Total: {self.reward:+.4f}")
         return "\n".join(lines)
 
     def to_dict(self) -> dict:
@@ -89,7 +123,11 @@ def grade(ai_action: dict, ground_truth: dict | None) -> GradeResult:
     ground_truth keys: bug → {type, severity, description, line_hint}
     """
     if ground_truth is None or "bug" not in ground_truth:
-        return GradeResult(reward=0, breakdown=["No ground truth available"], correct=False)
+        return GradeResult(
+            reward=_normalize_reward(0),
+            breakdown=["No ground truth available"],
+            correct=False,
+        )
 
     bug = ground_truth["bug"]
     bug_type     = bug.get("type", "none")
@@ -203,7 +241,7 @@ def grade(ai_action: dict, ground_truth: dict | None) -> GradeResult:
         breakdown.append(f"{PENALTY_UNKNOWN_ACTION}: unknown action type '{ai_type}'")
 
     return GradeResult(
-        reward=reward,
+        reward=_normalize_reward(reward),
         breakdown=breakdown,
         correct=correct,
         bug_type=bug_type,
@@ -219,7 +257,7 @@ def grade(ai_action: dict, ground_truth: dict | None) -> GradeResult:
 def batch_grade(episodes: list[dict]) -> dict:
     """Summarise grading across multiple episodes."""
     results_list: list[dict] = []
-    total_reward    = 0
+    total_reward    = 0.0
     correct_count   = 0
     best_score      = -float("inf")
     worst_score     = float("inf")
@@ -234,7 +272,7 @@ def batch_grade(episodes: list[dict]) -> dict:
         d   = res.to_dict()
         results_list.append(d)
 
-        total_reward += d["reward"]
+        total_reward += float(d["reward"])
         if d["correct"]:
             correct_count += 1
             if d["bug_type"] == "security":
