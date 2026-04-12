@@ -1,6 +1,12 @@
 import uuid
 from openenv.core.env_server import Environment
 from models import CodeReviewAction, CodeReviewObservation, CodeReviewState
+from tasks.easy.grader import grade as grade_task_easy_001
+from tasks.medium.grader import grade as grade_task_medium_002
+from tasks.hard.grader import grade as grade_task_hard_003
+from tasks.extra1.grader import grade as grade_task_extra_004
+from tasks.extra2.grader import grade as grade_task_extra_005
+from tasks.scoring import finalize_task_reward
 
 
 class CodeBugEnvironment(Environment):
@@ -71,6 +77,14 @@ class CodeBugEnvironment(Environment):
         },
     ]
 
+    _TASK_GRADERS = {
+        "task_easy_001": grade_task_easy_001,
+        "task_medium_002": grade_task_medium_002,
+        "task_hard_003": grade_task_hard_003,
+        "task_extra_004": grade_task_extra_004,
+        "task_extra_005": grade_task_extra_005,
+    }
+
     def __init__(self):
         self._state = CodeReviewState()
 
@@ -94,43 +108,20 @@ class CodeBugEnvironment(Environment):
             ),
         )
 
-    @staticmethod
-    def _clamp_reward(raw: float) -> float:
-        """Clamp to (0, 1) exclusive — required by hackathon task validator."""
-        return max(0.01, min(0.99, raw))
-
     def step(self, action: CodeReviewAction, timeout_s=None, **kwargs) -> CodeReviewObservation:
         """Grade the agent's action and advance to the next task."""
         self._state.step_count += 1
 
         idx   = self._state.current_task_idx
         task  = self.TASKS[idx]
-        truth = task["truth"]
+        task_id = task["id"]
 
-        # Compute raw reward, then clamp to (0, 1) exclusive
-        raw_reward = 0.0
-        if action.category.strip().lower() == truth["category"]:
-            raw_reward += 0.5
-        
-        try:
-            sev = int(action.severity)
-            sev_diff = abs(sev - truth["severity"])
-        except (ValueError, TypeError):
-            sev_diff = 99
-            
-        if sev_diff == 0:
-            raw_reward += 0.3
-        elif sev_diff == 1:
-            raw_reward += 0.15
-            
-        if action.line_hint is not None:
-            try:
-                if int(action.line_hint) == truth["line_hint"]:
-                    raw_reward += 0.2
-            except (ValueError, TypeError):
-                pass
-
-        reward = self._clamp_reward(raw_reward)
+        grader = self._TASK_GRADERS.get(task_id)
+        if grader is None:
+            reward = 0.5
+        else:
+            reward = float(grader(action))
+        reward = finalize_task_reward(reward)
         self._state.total_score += reward
         self._state.current_task_idx += 1
 

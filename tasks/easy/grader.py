@@ -2,12 +2,12 @@
 Grader for task_easy_001 — Balance Transfer boundary bug.
 """
 
+from tasks.scoring import finalize_task_reward
+
 TRUTH = {"category": "logic", "severity": 4, "line_hint": 2}
 
-def _clamp(score: float) -> float:
-    return max(0.01, min(0.99, score))
 
-def grade(action: any) -> float:
+def grade(action: object, **kwargs) -> float:
     reward = 0.0
     
     # Handle dict or Pydantic model
@@ -42,4 +42,4 @@ def grade(action: any) -> float:
         except (ValueError, TypeError):
             pass
 
-    return _clamp(reward)
+    return finalize_task_reward(reward)

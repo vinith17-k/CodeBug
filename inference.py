@@ -11,6 +11,7 @@ Strictly follows the Meta PyTorch Hackathon pre-submission checklist:
 import os
 import json
 import sys
+import math
 
 from openai import OpenAI
 
@@ -168,7 +169,9 @@ def score_action(action: dict, truth: dict) -> float:
             pass
 
     # Clamp to (0.0, 1.0) exclusive: 0.0 → 0.01, 1.0 → 0.99
-    clamped = 0.01 + (min(reward, 1.0) * 0.98)
+    if not math.isfinite(reward):
+        reward = 0.0
+    clamped = 0.01 + (min(max(reward, 0.0), 1.0) * 0.98)
     return round(clamped, 4)
 
 

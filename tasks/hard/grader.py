@@ -2,12 +2,12 @@
 Grader for task_hard_003 — SQL injection detection.
 """
 
+from tasks.scoring import finalize_task_reward
+
 TRUTH = {"category": "security", "severity": 5, "line_hint": 2}
 
-def _clamp(score: float) -> float:
-    return max(0.01, min(0.99, score))
 
-def grade(action: any) -> float:
+def grade(action: object, **kwargs) -> float:
     reward = 0.0
     
     def get_attr(obj, attr, default=None):
@@ -38,4 +38,4 @@ def grade(action: any) -> float:
         except (ValueError, TypeError):
             pass
 
-    return _clamp(reward)
+    return finalize_task_reward(reward)
