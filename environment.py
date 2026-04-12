@@ -8,6 +8,7 @@ class CodeBugEnvironment(Environment):
 
     TASKS = [
         {
+            "id": "task_easy_001",
             "difficulty": "easy",
             "snippet": (
                 "def transfer(from_account, to_account, amount):\n"
@@ -20,6 +21,7 @@ class CodeBugEnvironment(Environment):
             "truth": {"category": "logic", "severity": 4, "line_hint": 2},
         },
         {
+            "id": "task_medium_002",
             "difficulty": "medium",
             "snippet": (
                 "def find_max(numbers):\n"
@@ -34,6 +36,7 @@ class CodeBugEnvironment(Environment):
             "truth": {"category": "logic", "severity": 3, "line_hint": 5},
         },
         {
+            "id": "task_hard_003",
             "difficulty": "hard",
             "snippet": (
                 "def login(username, password):\n"
@@ -45,6 +48,26 @@ class CodeBugEnvironment(Environment):
                 "    return False"
             ),
             "truth": {"category": "security", "severity": 5, "line_hint": 2},
+        },
+        {
+            "id": "task_extra_004",
+            "difficulty": "hard",
+            "snippet": (
+                "API_KEY = \"sk-1234567890abcdef\"\n"
+                "def process_data(data):\n"
+                "    return data.upper()"
+            ),
+            "truth": {"category": "security", "severity": 5, "line_hint": 1},
+        },
+        {
+            "id": "task_extra_005",
+            "difficulty": "medium",
+            "snippet": (
+                "def divide(a, b):\n"
+                "    # Potential bug here\n"
+                "    return a / b"
+            ),
+            "truth": {"category": "logic", "severity": 3, "line_hint": 3},
         },
     ]
 
@@ -62,7 +85,7 @@ class CodeBugEnvironment(Environment):
         task = self.TASKS[0]
         return CodeReviewObservation(
             done=False,
-            reward=0.0,
+            reward=0.01,  # Start with a baseline safe score
             code_snippet=task["snippet"],
             difficulty=task["difficulty"],
             feedback=(
@@ -70,6 +93,11 @@ class CodeBugEnvironment(Environment):
                 "identify the bug category, severity (1-5), and line number."
             ),
         )
+
+    @staticmethod
+    def _clamp_reward(raw: float) -> float:
+        """Clamp to (0, 1) exclusive — required by hackathon task validator."""
+        return max(0.01, min(0.99, raw))
 
     def step(self, action: CodeReviewAction, timeout_s=None, **kwargs) -> CodeReviewObservation:
         """Grade the agent's action and advance to the next task."""
@@ -79,18 +107,30 @@ class CodeBugEnvironment(Environment):
         task  = self.TASKS[idx]
         truth = task["truth"]
 
-        # Reward: 0.0 → 1.0
-        reward = 0.0
+        # Compute raw reward, then clamp to (0, 1) exclusive
+        raw_reward = 0.0
         if action.category.strip().lower() == truth["category"]:
-            reward += 0.5
-        sev_diff = abs(action.severity - truth["severity"])
+            raw_reward += 0.5
+        
+        try:
+            sev = int(action.severity)
+            sev_diff = abs(sev - truth["severity"])
+        except (ValueError, TypeError):
+            sev_diff = 99
+            
         if sev_diff == 0:
-            reward += 0.3
+            raw_reward += 0.3
         elif sev_diff == 1:
-            reward += 0.15
-        if action.line_hint is not None and action.line_hint == truth["line_hint"]:
-            reward += 0.2
+            raw_reward += 0.15
+            
+        if action.line_hint is not None:
+            try:
+                if int(action.line_hint) == truth["line_hint"]:
+                    raw_reward += 0.2
+            except (ValueError, TypeError):
+                pass
 
+        reward = self._clamp_reward(raw_reward)
         self._state.total_score += reward
         self._state.current_task_idx += 1
 

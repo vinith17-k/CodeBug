@@ -35,7 +35,7 @@ client = OpenAI(
 )
 
 # ─────────────────────────────────────────────────────────────
-# Code review tasks (3 difficulty levels: easy → medium → hard)
+# Code review tasks (5 tasks)
 # ─────────────────────────────────────────────────────────────
 TASKS = [
     {
@@ -49,7 +49,7 @@ TASKS = [
             "        return True\n"
             "    return False"
         ),
-        "truth": {"category": "logic", "severity": 4},
+        "truth": {"category": "logic", "severity": 4, "line_hint": 2},
     },
     {
         "id": "task_medium_002",
@@ -64,7 +64,7 @@ TASKS = [
             "            max_val = numbers[i]\n"
             "    return max_val"
         ),
-        "truth": {"category": "logic", "severity": 3},
+        "truth": {"category": "logic", "severity": 3, "line_hint": 5},
     },
     {
         "id": "task_hard_003",
@@ -78,7 +78,27 @@ TASKS = [
             "        return True\n"
             "    return False"
         ),
-        "truth": {"category": "security", "severity": 5},
+        "truth": {"category": "security", "severity": 5, "line_hint": 2},
+    },
+    {
+        "id": "task_extra_004",
+        "difficulty": "hard",
+        "code": (
+            "API_KEY = \"sk-1234567890abcdef\"\n"
+            "def process_data(data):\n"
+            "    return data.upper()"
+        ),
+        "truth": {"category": "security", "severity": 5, "line_hint": 1},
+    },
+    {
+        "id": "task_extra_005",
+        "difficulty": "medium",
+        "code": (
+            "def divide(a, b):\n"
+            "    # Potential bug here\n"
+            "    return a / b"
+        ),
+        "truth": {"category": "logic", "severity": 3, "line_hint": 3},
     },
 ]
 
@@ -123,21 +143,31 @@ def score_action(action: dict, truth: dict) -> float:
     reward = 0.0
 
     # Category match → 0.5
-    if action.get("category", "").lower() == truth["category"]:
+    if str(action.get("category", "")).lower() == truth["category"]:
         reward += 0.5
 
     # Severity accuracy → up to 0.3
-    sev_diff = abs(int(action.get("severity", 0)) - truth["severity"])
+    try:
+        sev = int(action.get("severity", 0))
+        sev_diff = abs(sev - truth["severity"])
+    except:
+        sev_diff = 99
+        
     if sev_diff == 0:
         reward += 0.3
     elif sev_diff == 1:
         reward += 0.15
 
-    # Any non-None line hint when a bug exists → 0.2
-    if action.get("line_hint") is not None and truth["category"] != "approve":
-        reward += 0.2
+    # Line hint match → 0.2
+    lh = action.get("line_hint")
+    if lh is not None:
+        try:
+            if int(lh) == truth["line_hint"]:
+                reward += 0.2
+        except:
+            pass
 
-    # Clamp to (0.0, 1.0) exclusive: 0.0 → 0.01, 1.0 → 0.99, others scale proportionally
+    # Clamp to (0.0, 1.0) exclusive: 0.0 → 0.01, 1.0 → 0.99
     clamped = 0.01 + (min(reward, 1.0) * 0.98)
     return round(clamped, 4)
 

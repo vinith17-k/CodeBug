@@ -1,9 +1,40 @@
 name: "CodeBug Review Environment"
 version: "1.0.0"
-description: "RL environment where an AI agent reviews code snippets to identify bugs. Three tasks: easy (logic/boundary), medium (off-by-one), hard (SQL injection). Reward 0-1 per step."
+description: "RL environment where an AI agent reviews code snippets to identify bugs. Five tasks covering logic and security. Reward strictly in (0,1) per step."
 entry_point: "main:app"
 author: "vinith17"
 tags: ["rl", "code-review", "security", "agent", "pytorch-hackathon"]
 environment_class: "environment.CodeBugEnvironment"
 action_class: "models.CodeReviewAction"
 observation_class: "models.CodeReviewObservation"
+
+tasks:
+  - id: "task_easy_001"
+    name: "Balance Transfer Boundary Bug"
+    description: "Detect strict > instead of >= in balance check."
+    difficulty: "easy"
+    grader: "tasks.easy.grader:grade"
+
+  - id: "task_medium_002"
+    name: "Find Max Off-by-One"
+    description: "Detect range(len(x)-1) skipping the last element."
+    difficulty: "medium"
+    grader: "tasks.medium.grader:grade"
+
+  - id: "task_hard_003"
+    name: "SQL Injection Detection"
+    description: "Detect f-string SQL injection."
+    difficulty: "hard"
+    grader: "tasks.hard.grader:grade"
+
+  - id: "task_extra_004"
+    name: "Hardcoded API Key"
+    description: "Detect hardcoded secrets."
+    difficulty: "hard"
+    grader: "tasks.extra1.grader:grade"
+
+  - id: "task_extra_005"
+    name: "Division by Zero"
+    description: "Detect division without zero-check."
+    difficulty: "medium"
+    grader: "tasks.extra2.grader:grade"
