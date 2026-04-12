@@ -1,0 +1,35 @@
+# Mirrors this GitHub repo to your Hugging Face Space on every push to main.
+#
+# Setup (one-time):
+# 1. GitHub → Settings → Secrets and variables → Actions → New secret: HF_TOKEN
+#    (Hugging Face token with write access to the Space — create at huggingface.co/settings/tokens)
+# 2. If your Space is not "vinith17/CodeBug", edit huggingface_repo_id in this file.
+#
+# If the Space is also "Connected to GitHub" in HF Settings, pick ONE sync method to avoid conflicts
+# (either disconnect native GitHub on HF and rely on this Action, or fix the native integration and
+# delete this workflow).
+#
+# Docs: https://huggingface.co/docs/hub/main/spaces-github-actions
+
+name: Sync to Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync GitHub → Hugging Face Space
+        uses: huggingface/hub-sync@v0.1.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          # Must match your Space: https://huggingface.co/spaces/<user>/<name>
+          huggingface_repo_id: vinith17/CodeBug
+          hf_token: ${{ secrets.HF_TOKEN }}
+          repo_type: space
+          space_sdk: docker
