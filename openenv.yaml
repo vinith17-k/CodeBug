@@ -1,19 +1,12 @@
-# Modern HF / OpenEnv manifest fields (see openenv-cli templates) + legacy keys for older tooling
-spec_version: 1
-type: space
-runtime: fastapi
-app: "main:app"
-port: 7860
-
 name: "CodeBug Review Environment"
-version: "1.0.0"
+version: "1.2.0"
 description: "RL environment where an AI agent reviews code snippets to identify bugs. Five tasks covering logic and security. Reward strictly in (0,1) per step."
 entry_point: "main:app"
-author: "vinith17"
-tags: ["rl", "code-review", "security", "agent", "pytorch-hackathon"]
 environment_class: "environment.CodeBugEnvironment"
 action_class: "models.CodeReviewAction"
 observation_class: "models.CodeReviewObservation"
+author: "vinith17"
+tags: ["rl", "code-review", "security", "agent", "pytorch-hackathon"]
 
 tasks:
   - id: "task_easy_001"

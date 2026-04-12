@@ -2,10 +2,14 @@
 Grader for task_extra_004 — Hardcoded API key.
 """
 
-from tasks.scoring import finalize_task_reward
-
 TRUTH = {"category": "security", "severity": 5, "line_hint": 1}
 
+def _clamp(x: float) -> float:
+    try:
+        val = float(x)
+    except:
+        val = 0.5
+    return max(0.01, min(0.99, val))
 
 def grade(action: object, **kwargs) -> float:
     reward = 0.0
@@ -30,4 +34,4 @@ def grade(action: object, **kwargs) -> float:
             if int(lh) == TRUTH["line_hint"]: reward += 0.2
         except: pass
 
-    return finalize_task_reward(reward)
+    return _clamp(reward)
