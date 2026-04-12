@@ -15,6 +15,7 @@ import re
 import sys
 
 from openai import OpenAI
+from agent import mock_review_action
 
 # Manifest graders (must match openenv.yaml `grader:` entries exactly)
 from tasks.easy.grader import grade as grade_task_easy_001
@@ -182,16 +183,19 @@ def run_inference() -> None:
     llm_key = (
         os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY") or ""
     ).strip()
-    if not llm_key:
+
+    has_api_key = bool(llm_key)
+
+    if not has_api_key:
         print(
-            "[ERROR] Set HF_TOKEN or OPENAI_API_KEY to your OpenAI-compatible API key.",
+            "[WARNING] HF_TOKEN or OPENAI_API_KEY not set — using rule-based fallback for scoring.",
             flush=True,
         )
-        sys.exit(1)
 
-    client = OpenAI(api_key=llm_key, base_url=API_BASE_URL)
+    client = None
+    if has_api_key:
+        client = OpenAI(api_key=llm_key, base_url=API_BASE_URL)
 
-    # Ensure grader.py rubric returns (0,1); does not change [STEP] scores (those use manifest graders).
     _san = root_rubric_grade(
         {
             "type": "approve",
@@ -210,7 +214,10 @@ def run_inference() -> None:
     for task in TASKS:
         tid = task["task_id"]
         try:
-            action = run_task(client, task)
+            if client is not None:
+                action = run_task(client, task)
+            else:
+                action = mock_review_action(task["code"])
         except Exception as exc:
             action = {
                 "category": "approve",

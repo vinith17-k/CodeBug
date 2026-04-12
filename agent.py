@@ -234,6 +234,38 @@ def mock_review(code: str) -> list:
     return bugs
 
 
+def mock_review_action(code: str) -> dict:
+    """
+    Rule-based fallback that returns a single action dict (not a list).
+    Used when LLM is unavailable - provides heuristic-based scoring.
+    Returns format compatible with inference.py graders:
+    {
+        "category": "logic" | "security" | "style" | "approve",
+        "severity": int 1-5,
+        "line_hint": int | None,
+        "comment": str
+    }
+    """
+    bugs = mock_review(code)
+    if not bugs:
+        return {
+            "category": "approve",
+            "severity": 1,
+            "line_hint": None,
+            "comment": "no_issues_found",
+        }
+    bug = bugs[0]
+    cat = str(bug.get("category", "logic"))
+    if cat not in ("logic", "security", "style", "approve"):
+        cat = "logic"
+    return {
+        "category": cat,
+        "severity": int(bug.get("severity", 3)),
+        "line_hint": None,
+        "comment": bug.get("comment", "")[:100],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
