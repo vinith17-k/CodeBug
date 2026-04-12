@@ -1,8 +1,8 @@
 """
 inference.py — Hackathon baseline inference (repo root).
 
-Requires env: HF_TOKEN (no default). Optional: API_BASE_URL, MODEL_NAME (OpenAI-compatible defaults).
-Uses openai.OpenAI only. Emits exact stdout lines for the evaluator: [START], [STEP] … score=…, [END].
+Requires an OpenAI-compatible API key: HF_TOKEN (hackathon) or OPENAI_API_KEY if HF_TOKEN is unset.
+Optional: API_BASE_URL, MODEL_NAME. Uses openai.OpenAI only. Stdout: [START], [STEP] … score=…, [END].
 """
 
 from __future__ import annotations
@@ -18,13 +18,16 @@ from grader import grade
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-HF_TOKEN = os.environ.get("HF_TOKEN")
+_LLM_KEY = (os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY") or "").strip()
 
-if not HF_TOKEN:
-    print("[ERROR] HF_TOKEN environment variable is required but not set.", flush=True)
+if not _LLM_KEY:
+    print(
+        "[ERROR] Set HF_TOKEN or OPENAI_API_KEY to your OpenAI-compatible API key.",
+        flush=True,
+    )
     sys.exit(1)
 
-client = OpenAI(api_key=HF_TOKEN, base_url=API_BASE_URL)
+client = OpenAI(api_key=_LLM_KEY, base_url=API_BASE_URL)
 
 TASKS = [
     {
