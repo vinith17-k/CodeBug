@@ -11,9 +11,13 @@ Strictly follows the Meta PyTorch Hackathon pre-submission checklist:
 import os
 import json
 import sys
-import math
 
 from openai import OpenAI
+from tasks.easy.grader import grade as grade_task_easy_001
+from tasks.medium.grader import grade as grade_task_medium_002
+from tasks.hard.grader import grade as grade_task_hard_003
+from tasks.extra1.grader import grade as grade_task_extra_004
+from tasks.extra2.grader import grade as grade_task_extra_005
 
 # ─────────────────────────────────────────────────────────────
 # Environment variables (checklist requirement)
@@ -136,43 +140,20 @@ def call_llm(code: str, difficulty: str) -> dict:
     return json.loads(raw)
 
 
-def score_action(action: dict, truth: dict) -> float:
-    """
-    Score the agent's action against ground truth.
-    Returns a float strictly between 0.0 and 1.0 (exclusive).
-    """
-    reward = 0.0
+# Same callables as openenv.yaml `grader:` entries — validators compare [STEP] rewards to these.
+_TASK_GRADERS = {
+    "task_easy_001": grade_task_easy_001,
+    "task_medium_002": grade_task_medium_002,
+    "task_hard_003": grade_task_hard_003,
+    "task_extra_004": grade_task_extra_004,
+    "task_extra_005": grade_task_extra_005,
+}
 
-    # Category match → 0.5
-    if str(action.get("category", "")).lower() == truth["category"]:
-        reward += 0.5
 
-    # Severity accuracy → up to 0.3
-    try:
-        sev = int(action.get("severity", 0))
-        sev_diff = abs(sev - truth["severity"])
-    except:
-        sev_diff = 99
-        
-    if sev_diff == 0:
-        reward += 0.3
-    elif sev_diff == 1:
-        reward += 0.15
-
-    # Line hint match → 0.2
-    lh = action.get("line_hint")
-    if lh is not None:
-        try:
-            if int(lh) == truth["line_hint"]:
-                reward += 0.2
-        except:
-            pass
-
-    # Clamp to (0.0, 1.0) exclusive: 0.0 → 0.01, 1.0 → 0.99
-    if not math.isfinite(reward):
-        reward = 0.0
-    clamped = 0.01 + (min(max(reward, 0.0), 1.0) * 0.98)
-    return round(clamped, 4)
+def grade_action_for_task(task_id: str, action: dict) -> float:
+    """Delegate to the YAML-configured grader so stdout matches manifest grading exactly."""
+    grader = _TASK_GRADERS[task_id]
+    return round(float(grader(action)), 6)
 
 
 def run_inference():
@@ -185,7 +166,6 @@ def run_inference():
         task_id   = task["id"]
         code      = task["code"]
         difficulty = task["difficulty"]
-        truth     = task["truth"]
 
         # ── [STEP] send action ─────────────────────────────────
         try:
@@ -193,7 +173,7 @@ def run_inference():
         except Exception as exc:
             action = {"category": "approve", "severity": 1, "line_hint": None, "comment": str(exc)}
 
-        reward = score_action(action, truth)
+        reward = grade_action_for_task(task_id, action)
         total_reward += reward
 
         print(
