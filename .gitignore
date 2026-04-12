@@ -34,7 +34,7 @@ history.json
 .islstudio/
 .vibecheck/
 
-# Vercel
+# Vercel (ignore local CLI metadata if present)
 .vercel
 
 # Backups

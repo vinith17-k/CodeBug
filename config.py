@@ -49,10 +49,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 EPISODES_FILE    = os.path.join(BASE_DIR, "episodes.json")
 ANSWERS_FILE     = os.path.join(BASE_DIR, "answers.json")
 
-if os.environ.get("VERCEL"):
-    RUNS_DIR = "/tmp/runs"
-else:
-    RUNS_DIR = os.path.join(BASE_DIR, "runs")
+RUNS_DIR = os.path.join(BASE_DIR, "runs")
 CHECKPOINT_FILE  = os.path.join(RUNS_DIR, "checkpoint.json")
 
 # ---------------------------------------------------------------------------
